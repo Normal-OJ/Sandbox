@@ -1,0 +1,10 @@
+# for cpp
+# docker build -t c_cpp . --no-cache
+
+FROM alpine
+
+MAINTAINER Normal-OJ
+
+
+# install g++
+RUN apk add --no-cache g++
