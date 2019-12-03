@@ -3,7 +3,7 @@ import json
 import docker
 
 
-class submission_runner():
+class SubmissionRunner():
     """docstring for submission_runner"""
     def __init__(self,
                  submission_id,
