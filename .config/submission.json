@@ -1,0 +1,18 @@
+{
+	"working_dir": "/home/as535364/桌面/docker-playground/submissions/",
+	"docker_url": "unix://var/run/docker.sock",
+	"compile_argument": {
+		"c11": "gcc -DONLINE_JUDGE -O2 -Wall -fmax-errors=3 -std=c11 main.c -lm -o main",
+		"cpp11": "g++ -DONLINE_JUDGE -O2 -Wall -fmax-errors=3 -std=c++11 main.cpp -lm -o main"
+	},
+	"execute_argument": {
+		"c11": "./main",
+		"cpp11": "./main",
+		"python3": "python3 main.py"
+	},
+	"image": {
+		"c11": "c_cpp",
+		"cpp11": "c_cpp",
+		"python3": "python:3.7.5-alpine3.9"
+	}
+}
