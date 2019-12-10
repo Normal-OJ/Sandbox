@@ -5,6 +5,7 @@ import random
 import json
 from tests.problem_parser import ProblemParser
 
+
 class SubmissionGenerator:
     def __init__(self,
                  submission_path='submissions',
@@ -18,7 +19,8 @@ class SubmissionGenerator:
         if not os.path.exists(self.submission_path):
             os.mkdir(self.submission_path)
         elif os.path.isfile(self.submission_path):
-            raise FileExistsError(f'The {self.submission_path} is a file! not a directory.')
+            raise FileExistsError(
+                f'The {self.submission_path} is a file! not a directory.')
 
         # parse problem data
         if problem_parser is None:

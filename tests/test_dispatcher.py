@@ -39,7 +39,6 @@ class TestDispatcher:
                 _id,
                 TestDispatcher.generator.problem[prob]['meta']['lang']) is True
 
-
     def test_duplicated_submission(self, docker_dispatcher: Dispatcher):
         import random
         docker_dispatcher.start()
