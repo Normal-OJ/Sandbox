@@ -2,7 +2,7 @@ import json
 
 import docker
 
-from sandbox import sandbox
+from sandbox import Sandbox
 
 
 class SubmissionRunner():
@@ -12,6 +12,8 @@ class SubmissionRunner():
                  time_limit,
                  mem_limit,
                  special_judge=False,
+                 testdata_input=None,
+                 testdata_output=None,
                  lang=None):
         # config file
         with open('.config/submission.json') as f:
@@ -23,6 +25,8 @@ class SubmissionRunner():
         self.submission_id = submission_id  # str
         self.time_limit = time_limit  # int ms
         self.mem_limit = mem_limit  # int kb
+        self.testdata_input = testdata_input # str
+        self.testdata_output = testdata_output # str
         # working_dir
         self.working_dir = config['working_dir']
         # for language specified settings
@@ -33,7 +37,7 @@ class SubmissionRunner():
     def compile(self):
         compile_command = self.compile_argument[self.lang]
         # compile must be done in 10 seconds
-        s = sandbox(time_limit=10000,
+        s = Sandbox(time_limit=10000,
                     mem_limit=self.mem_limit,
                     image=self.image[self.lang],
                     src_dir=f'{self.working_dir}/{self.submission_id}/src',
@@ -44,7 +48,7 @@ class SubmissionRunner():
 
     def run(self):
         execute_command = self.execute_argument[self.lang]
-        s = sandbox(time_limit=self.time_limit,
+        s = Sandbox(time_limit=self.time_limit,
                     mem_limit=self.mem_limit,
                     image=self.image[self.lang],
                     src_dir=f'{self.working_dir}/{self.submission_id}/src',
