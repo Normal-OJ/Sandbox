@@ -11,9 +11,9 @@ class SubmissionRunner():
                  submission_id,
                  time_limit,
                  mem_limit,
+                 testdata_input,
+                 testdata_output,
                  special_judge=False,
-                 testdata_input=None,
-                 testdata_output=None,
                  lang=None):
         # config file
         with open('.config/submission.json') as f:
@@ -25,8 +25,8 @@ class SubmissionRunner():
         self.submission_id = submission_id  # str
         self.time_limit = time_limit  # int ms
         self.mem_limit = mem_limit  # int kb
-        self.testdata_input = testdata_input # str
-        self.testdata_output = testdata_output # str
+        self.testdata_input = testdata_input  # str
+        self.testdata_output = testdata_output  # str
         # working_dir
         self.working_dir = config['working_dir']
         # for language specified settings
@@ -42,6 +42,7 @@ class SubmissionRunner():
                     image=self.image[self.lang],
                     src_dir=f'{self.working_dir}/{self.submission_id}/src',
                     command=compile_command,
+                    stdin='',
                     volume_readonly=False)
         result = s.run()
         return result
@@ -52,6 +53,8 @@ class SubmissionRunner():
                     mem_limit=self.mem_limit,
                     image=self.image[self.lang],
                     src_dir=f'{self.working_dir}/{self.submission_id}/src',
-                    command=execute_command)
+                    command=execute_command,
+                    stdin=self.testdata_input,
+                    volume_readonly=False)
         result = s.run()
         return result
