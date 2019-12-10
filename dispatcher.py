@@ -8,6 +8,7 @@ import requests
 from queue import Queue
 from submission import SubmissionRunner
 
+
 class Dispatcher(threading.Thread):
     def __init__(self, config_path='.config/dispatcher.json'):
         super().__init__()
@@ -20,7 +21,8 @@ class Dispatcher(threading.Thread):
         self.do_run = True
 
         # http handler URL
-        self.HTTP_HANDLER_URL = config.get('HTTP_HANDLER_URL', 'localhost:8888')
+        self.HTTP_HANDLER_URL = config.get('HTTP_HANDLER_URL',
+                                           'localhost:8888')
 
         # submission location
         self.SUBMISSION_DIR = config.get('SUBMISSION_DIR', './submissions')
@@ -55,7 +57,8 @@ class Dispatcher(threading.Thread):
 
         # check whether the submission directory exist
         if not os.path.exists(submission_path):
-            raise FileNotFoundError(f'submission id: {submission_id} file not found.')
+            raise FileNotFoundError(
+                f'submission id: {submission_id} file not found.')
         elif not os.path.isdir(submission_path):
             raise NotADirectoryError(f'{submission_path} is not a directory')
 
@@ -122,7 +125,7 @@ class Dispatcher(threading.Thread):
                                   case_in,
                                   case_out,
                                   lang=lang)
-        if lang in { 'c11', 'cpp11' }:
+        if lang in {'c11', 'cpp11'}:
             res = runner.compile()
         else:
             res = {'Status': 'AC'}
