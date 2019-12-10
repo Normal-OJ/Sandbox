@@ -11,6 +11,7 @@ class Sandbox():
                  image,
                  src_dir,
                  command,
+                 stdin,
                  volume_readonly=True):
         with open('.config/submission.json') as f:
             config = json.load(f)
@@ -19,6 +20,7 @@ class Sandbox():
         self.image = image  # str
         self.src_dir = src_dir  # str
         self.command = command  # str
+        self.stdin = stdin  # str
         self.volume_readonly = volume_readonly  # bool
         self.client = docker.APIClient(base_url=config['docker_url'])
 
@@ -35,6 +37,7 @@ class Sandbox():
             image=self.image,
             command=self.command,
             volumes=volume,
+            stdin_open=True,
             network_disabled=True,
             working_dir=container_working_dir,
             host_config=host_config)
@@ -43,7 +46,18 @@ class Sandbox():
             logging.warning(f'Warning: {docker_msg}')
 
         self.client.start(container)
-        exit_status = self.client.wait(container, timeout=5 * self.time_limit / 1000)
+
+        # stdin
+        s = self.client.attach_socket(container,
+                                      params={
+                                          'stdin': 1,
+                                          'stream': 1
+                                      })
+        s._sock.send(self.stdin.encode('utf-8'))
+        s.close()
+
+        exit_status = self.client.wait(container,
+                                       timeout=5 * self.time_limit / 1000)
 
         stdout = self.client.logs(container, stdout=True,
                                   stderr=False).decode('utf-8')
@@ -57,5 +71,4 @@ class Sandbox():
             'Stderr': stderr,
             'Duration': 10,
             'MemUsage': 200,
-            'Timeout': False
-        }  # Error:str Exit_code:int Stdout:str Stderr:str Duration:int(ms) MemUsage:int(kb) Timeout:bool
+        }  # Error:str Exit_code:int Stdout:str Stderr:str Duration:int(ms) MemUsage:int(kb)
