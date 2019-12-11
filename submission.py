@@ -45,6 +45,11 @@ class SubmissionRunner():
                     stdin='',
                     volume_readonly=False)
         result = s.run()
+        # Status Process
+        if result['ExitCode']:
+            result['Status'] = 'CE'
+        else:
+            result['Status'] = None
         return result
 
     def run(self):
@@ -57,4 +62,15 @@ class SubmissionRunner():
                     stdin=self.testdata_input,
                     volume_readonly=False)
         result = s.run()
+        # Status Process
+        if result['ExitCode']:
+            result['Status'] = 'RE'
+        elif result['MemUsage'] > self.mem_limit:
+            result['Status'] = 'MLE'
+        elif result['Duration'] > self.time_limit:
+            result['Status'] = 'TLE'
+        elif result['Stdout'] != self.testdata_output:
+            result['Status'] = 'WA'
+        else:
+            result['Status'] = 'AC'
         return result
