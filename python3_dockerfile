@@ -1,11 +1,8 @@
-# for c_cpp
+# for pthon3
 
-FROM alpine
+FROM python:3.7.5-alpine3.9
 
 MAINTAINER Normal-OJ
-
-# install g++
-RUN apk add --no-cache g++
 
 # sandbox user with uid:1450 home:/sandbox D:no passwd
 RUN adduser sandbox -h /sandbox -u 1450 -D
