@@ -26,9 +26,9 @@ long time_limit_to_watch;
 bool time_limit_exceeded_killed;
 
 void *watcher_thread(void *arg) {
-    sleep(time_limit_to_watch);
-    kill(pid, SIGKILL);
+    sleep(time_limit_to_watch*1000);
     time_limit_exceeded_killed = true;
+    kill(pid, SIGKILL);
     return arg; // Avoid 'parameter set but not used' warning
 }
 
@@ -89,28 +89,29 @@ int main(int argc, char **argv) {
         struct rusage usage;
         int status;
         if (wait4(pid, &status, 0, &usage) == -1) {
-            fprintf(fresult, "Runtime Error\nwait4() = -1\n0\n0\n");
+            fprintf(fresult, "RE\nwait4() = -1\n0\n0\n");
             return 0;
         }
 
         if (WIFEXITED(status)) {
             // Not signaled - exited normally
             if (WEXITSTATUS(status) != 0) {
-                fprintf(fresult, "Runtime Error\nWIFEXITED - WEXITSTATUS() = %d\n", WEXITSTATUS(status));
+                fprintf(fresult, "RE\nWIFEXITED - WEXITSTATUS() = %d\n", WEXITSTATUS(status));
             } else {
                 fprintf(fresult, "Exited Normally\nWIFEXITED - WEXITSTATUS() = %d\n", WEXITSTATUS(status));
             }
         } else {
-            // Signaled
+            // Signaled            
             int sig = WTERMSIG(status);
-            if (sig == SIGXCPU || usage.ru_utime.tv_sec > time_limit || time_limit_exceeded_killed) {
-                fprintf(fresult, "Time Limit Exceeded\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
+            printf("usage.ru_utime.tv_sec:%ld time_limit:%ld bool:%d sig:%d\n", usage.ru_utime.tv_sec, time_limit, time_limit_exceeded_killed, sig);
+            if (time_limit_exceeded_killed || usage.ru_utime.tv_sec > time_limit || sig == SIGXCPU) {
+                fprintf(fresult, "TLE\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
             } else if (sig == SIGXFSZ) {
-                fprintf(fresult, "Output Limit Exceeded\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
+                fprintf(fresult, "OLE\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
             } else if (usage.ru_maxrss > memory_limit) {
-                fprintf(fresult, "Memory Limit Exceeded\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
+                fprintf(fresult, "MLE\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
             } else {
-                fprintf(fresult, "Runtime Error\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
+                fprintf(fresult, "RE\nWEXITSTATUS() = %d, WTERMSIG() = %d (%s)\n", WEXITSTATUS(status), sig, strsignal(sig));
             }
         }
 
@@ -133,14 +134,14 @@ int main(int argc, char **argv) {
 
         if (time_limit) {
             struct rlimit lim;
-            lim.rlim_cur = time_limit + time_limit_reserve;
+            lim.rlim_cur = time_limit;
             lim.rlim_max = time_limit + time_limit_reserve;
             setrlimit(RLIMIT_CPU, &lim);
         }
 
         if (memory_limit) {
             struct rlimit lim;
-            lim.rlim_cur = (memory_limit + memory_limit_reserve) * 1024;
+            lim.rlim_cur = (memory_limit) * 1024;
             lim.rlim_max = (memory_limit + memory_limit_reserve) * 1024;
             setrlimit(RLIMIT_AS, &lim);
             if (large_stack) {
@@ -165,8 +166,7 @@ int main(int argc, char **argv) {
 #ifdef LOG
         puts("Entering target program...");
 #endif
-        setegid(SANDBOX_GID);
-        setuid(SANDBOX_UID);       
+
 
         if(strlen(file_stdin)){
             int fd = open(file_stdin, O_RDONLY);
@@ -174,36 +174,38 @@ int main(int argc, char **argv) {
 #ifdef LOG
                 puts("Cannot open file_stdin...");
 #endif
-                return 1;
+                return -1;
             }
             dup2(fd, STDIN_FILENO);
             close(fd);
         }
 
         if (strlen(file_stdout)){
-            int fd = open(file_stdout, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR);
+            int fd = open(file_stdout, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
             if(fd < 0){
 #ifdef LOG
                 puts("Cannot open file_stdout...");
 #endif
-                return 1;
+                return -1;
             }
             dup2(fd, STDOUT_FILENO);
             close(fd);
         }
 
         if (strlen(file_stderr)){
-            int fd = open(file_stderr, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR);
-            printf("fd: %d\n", fd);
+            int fd = open(file_stderr, O_WRONLY|O_CREAT, S_IRUSR|S_IWUSR|S_IRGRP|S_IROTH);
             if(fd < 0){
 #ifdef LOG
                 puts("Cannot open file_stderr...");
 #endif
-                return 1;
+                return -1;
             }
             dup2(fd, STDERR_FILENO);
             close(fd);
         }
+
+        setegid(SANDBOX_GID);
+        setuid(SANDBOX_UID);        
         execlp(program, program, NULL);
     }
     return 0;

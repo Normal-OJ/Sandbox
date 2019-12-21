@@ -1,5 +1,9 @@
 import json
 import logging
+import os
+import tarfile
+from io import BytesIO
+from uuid import uuid1
 
 import docker
 
@@ -11,33 +15,52 @@ class Sandbox():
                  image,
                  src_dir,
                  command,
-                 stdin,
+                 compile,
+                 stdin_path=None,
                  volume_readonly=True):
         with open('.config/submission.json') as f:
             config = json.load(f)
-        self.time_limit = time_limit  # int:ms
+        self.time_limit = time_limit  # int:s
         self.mem_limit = mem_limit  # int:kb
         self.image = image  # str
         self.src_dir = src_dir  # str
+        self.stdin_path = stdin_path  # str
         self.command = command  # str
-        self.stdin = stdin  # str
-        self.volume_readonly = volume_readonly  # bool
+        self.compile = compile  # bool
         self.client = docker.APIClient(base_url=config['docker_url'])
 
     def run(self):
-        read_mode = 'ro' if self.volume_readonly else 'rw'
-        volume = {self.src_dir: {'bind': '/submission', 'mode': read_mode}}
-        container_working_dir = '/submission'
-        host_config = self.client.create_host_config(
-            binds={self.src_dir: {
-                'bind': '/submission',
+        # docker container settings
+        stdin_path = '/dev/null' if not self.stdin_path else '/testdata/in'
+        command_sandbox = self.command if self.compile else f'sandbox "{self.command}" {stdin_path} /result/stdout /result/stderr {self.time_limit} {self.time_limit//10 + 1} {self.mem_limit} {self.mem_limit//100 + 1} 1 1048576 10 /result/result'  # 10 process 1GB output limit
+        read_mode = 'rw'
+        volume = {
+            self.src_dir: {
+                'bind': '/src',
                 'mode': read_mode
-            }})
+            },
+            self.stdin_path: {
+                'bind': '/testdata/in',
+                'mode': read_mode
+            }
+        }
+        container_working_dir = '/src'
+        host_config = self.client.create_host_config(
+            binds={
+                self.src_dir: {
+                    'bind': '/src',
+                    'mode': read_mode
+                },
+                self.stdin_path: {
+                    'bind': '/testdata/in',
+                    'mode': read_mode
+                }
+            })
+
         container = self.client.create_container(
             image=self.image,
-            command=self.command,
+            command=command_sandbox,
             volumes=volume,
-            stdin_open=True,
             network_disabled=True,
             working_dir=container_working_dir,
             host_config=host_config)
@@ -45,30 +68,49 @@ class Sandbox():
             docker_msg = container.get('Warning')
             logging.warning(f'Warning: {docker_msg}')
 
+        # start and wait container
         self.client.start(container)
 
-        # stdin
-        s = self.client.attach_socket(container,
-                                      params={
-                                          'stdin': 1,
-                                          'stream': 1
-                                      })
-        s._sock.send(self.stdin.encode('utf-8'))
-        s.close()
+        try:
+            exit_status = self.client.wait(container,
+                                           timeout=5 * self.time_limit)
+        except:
+            pass
 
-        exit_status = self.client.wait(container,
-                                       timeout=5 * self.time_limit / 1000)
+        # result retrive
+        result = ['', '', -1, -1] if self.compile else self.get(
+            container=container, path='/result/',
+            filename='result').split('\n')
 
-        stdout = self.client.logs(container, stdout=True,
-                                  stderr=False).decode('utf-8')
-        stderr = self.client.logs(container, stdout=False,
-                                  stderr=True).decode('utf-8')
+        stdout = self.client.logs(
+            container, stdout=True,
+            stderr=False).decode('utf-8') if self.compile else self.get(
+                container=container, path='/result/', filename='stdout')
+        stderr = self.client.logs(
+            container, stdout=False,
+            stderr=True).decode('utf-8') if self.compile else self.get(
+                container=container, path='/result/', filename='stderr')
+
         self.client.remove_container(container, v=True, force=True)
         return {
-            'Error': exit_status['Error'],
-            'ExitCode': exit_status['StatusCode'],
+            'Status': result[0],
+            'Duration': int(result[2]) / 1000,
+            'MemUsage': int(result[3]),
             'Stdout': stdout,
             'Stderr': stderr,
-            'Duration': 10,
-            'MemUsage': 200,
-        }  # Error:str Exit_code:int Stdout:str Stderr:str Duration:int(ms) MemUsage:int(kb)
+            'ExitMsg': result[1],
+            'DockerError': exit_status['Error'],
+            'DockerExitCode': exit_status['StatusCode']
+        }  # tdout:str Stderr:str Duration:int(ms) MemUsage:int(kb)
+
+    def get(self, container, path, filename):
+        bits, stat = self.client.get_archive(container, f'{path}{filename}')
+        tarbits = b''.join(chunk for chunk in bits)
+        tar = tarfile.open(fileobj=BytesIO(tarbits))
+        extract_path = f'/tmp/{uuid1()}'
+        tar.extract(filename, extract_path)
+        with open(f'{extract_path}/{filename}', 'r') as f:
+            contents = f.read()
+        os.remove(f'{extract_path}/{filename}')
+        os.rmdir(extract_path)
+        return contents
