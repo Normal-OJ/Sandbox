@@ -37,7 +37,7 @@ class SubmissionRunner():
         compile_command = self.compile_argument[self.lang]
         # compile must be done in 10 seconds
         s = Sandbox(
-            time_limit=10,  # 10s
+            time_limit=10000,  # 10s
             mem_limit=1048576,  # 1GB
             image=self.image[self.lang],
             src_dir=f'{self.working_dir}/{self.submission_id}/src',
@@ -64,7 +64,7 @@ class SubmissionRunner():
         # Status Process
         with open(self.testdata_output_path, 'r') as f:
             ans_output = f.read()
-        status = ['TLE', 'MLE', 'RE', 'OE']
+        status = ['TLE', 'MLE', 'RE', 'OE', 'SE']
         if not result['Status'] in status:
             result['Status'] = 'AC' if result['Stdout'] == ans_output else 'WA'
         return result
