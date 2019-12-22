@@ -1,0 +1,4 @@
+{
+    "QUEUE_SIZE": 1024,
+    "MAX_CONTAINER_NUMBER": 500
+}
