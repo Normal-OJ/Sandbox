@@ -76,7 +76,7 @@ class Sandbox():
                                            timeout=5 * self.time_limit)
         except:
             self.client.remove_container(container, v=True, force=True)
-            return {'Status': 'SE'}
+            return {'Status': 'JE'}
 
         # result retrive
         try:
@@ -94,7 +94,7 @@ class Sandbox():
                     container=container, path='/result/', filename='stderr')
         except:
             self.client.remove_container(container, v=True, force=True)
-            return {'Status': 'SE'}
+            return {'Status': 'JE'}
 
         self.client.remove_container(container, v=True, force=True)
         return {
