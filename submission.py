@@ -6,13 +6,12 @@ from sandbox import Sandbox
 
 
 class SubmissionRunner():
-    """docstring for submission_runner"""
     def __init__(self,
                  submission_id,
                  time_limit,
                  mem_limit,
-                 testdata_input,
-                 testdata_output,
+                 testdata_input_path,
+                 testdata_output_path,
                  special_judge=False,
                  lang=None):
         # config file
@@ -23,10 +22,10 @@ class SubmissionRunner():
         self.special_judge = special_judge  # bool
         # required
         self.submission_id = submission_id  # str
-        self.time_limit = time_limit  # int ms
+        self.time_limit = time_limit  # int s
         self.mem_limit = mem_limit  # int kb
-        self.testdata_input = testdata_input  # str
-        self.testdata_output = testdata_output  # str
+        self.testdata_input_path = testdata_input_path  # absoulte path str
+        self.testdata_output_path = testdata_output_path  # absoulte path str
         # working_dir
         self.working_dir = config['working_dir']
         # for language specified settings
@@ -37,24 +36,35 @@ class SubmissionRunner():
     def compile(self):
         compile_command = self.compile_argument[self.lang]
         # compile must be done in 10 seconds
-        s = Sandbox(time_limit=10000,
-                    mem_limit=self.mem_limit,
-                    image=self.image[self.lang],
-                    src_dir=f'{self.working_dir}/{self.submission_id}/src',
-                    command=compile_command,
-                    stdin='',
-                    volume_readonly=False)
+        s = Sandbox(
+            time_limit=10000,  # 10s
+            mem_limit=1048576,  # 1GB
+            image=self.image[self.lang],
+            src_dir=f'{self.working_dir}/{self.submission_id}/src',
+            command=compile_command,
+            compile=True)
         result = s.run()
+        # Status Process
+        if result['DockerExitCode']:
+            result['Status'] = 'CE'
+        else:
+            result['Status'] = 'Pass'
         return result
 
     def run(self):
-        execute_command = self.execute_argument[self.lang]
+        execute_command = f'{self.execute_argument[self.lang]}'
         s = Sandbox(time_limit=self.time_limit,
                     mem_limit=self.mem_limit,
                     image=self.image[self.lang],
                     src_dir=f'{self.working_dir}/{self.submission_id}/src',
                     command=execute_command,
-                    stdin=self.testdata_input,
-                    volume_readonly=False)
+                    compile=False,
+                    stdin_path=self.testdata_input_path)
         result = s.run()
+        # Status Process
+        with open(self.testdata_output_path, 'r') as f:
+            ans_output = f.read()
+        status = ['TLE', 'MLE', 'RE', 'OE', 'SE']
+        if not result['Status'] in status:
+            result['Status'] = 'AC' if result['Stdout'] == ans_output else 'WA'
         return result

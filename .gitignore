@@ -1,7 +1,9 @@
 .vscode/
 
 venv
+.venv
 __pycache__
 
 .config/*
 !.config/*.example
+.vscode
