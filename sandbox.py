@@ -14,10 +14,9 @@ class Sandbox():
                  mem_limit,
                  image,
                  src_dir,
-                 command,
-                 compile,
-                 stdin_path=None,
-                 volume_readonly=True):
+                 lang_id,
+                 compile_need,
+                 stdin_path=None):
         with open('.config/submission.json') as f:
             config = json.load(f)
         self.time_limit = time_limit  # int:ms
@@ -25,23 +24,22 @@ class Sandbox():
         self.image = image  # str
         self.src_dir = src_dir  # str
         self.stdin_path = stdin_path  # str
-        self.command = command  # str
-        self.compile = compile  # bool
+        self.lang_id = lang_id  # str
+        self.compile_need = compile_need  # bool
         self.client = docker.APIClient(base_url=config['docker_url'])
 
     def run(self):
         # docker container settings
         stdin_path = '/dev/null' if not self.stdin_path else '/testdata/in'
-        command_sandbox = self.command if self.compile else f'sandbox "{self.command}" {stdin_path} /result/stdout /result/stderr {self.time_limit} {self.mem_limit} 1 1048576 10 /result/result'  # 10 process 1GB output limit
-        read_mode = 'rw'
+        command_sandbox = f'sandbox {self.lang_id} {self.compile_need} {stdin_path} /result/stdout /result/stderr {self.time_limit} {self.mem_limit} 1 1048576 10 /result/result'  # 10 process 1GB output limit
         volume = {
             self.src_dir: {
                 'bind': '/src',
-                'mode': read_mode
+                'mode': 'rw'
             },
             self.stdin_path: {
                 'bind': '/testdata/in',
-                'mode': read_mode
+                'mode': 'ro'
             }
         }
         container_working_dir = '/src'
@@ -49,11 +47,11 @@ class Sandbox():
             binds={
                 self.src_dir: {
                     'bind': '/src',
-                    'mode': read_mode
+                    'mode': 'rw'
                 },
                 self.stdin_path: {
                     'bind': '/testdata/in',
-                    'mode': read_mode
+                    'mode': 'ro'
                 }
             })
 
@@ -76,27 +74,25 @@ class Sandbox():
                                            timeout=5 * self.time_limit)
         except:
             self.client.remove_container(container, v=True, force=True)
-            return {'Status': 'SE'}
+            return {'Status': 'JE'}
 
         # result retrive
         try:
-            result = ['', '', -1, -1] if self.compile else self.get(
-                container=container, path='/result/',
-                filename='result').split('\n')
-
-            stdout = self.client.logs(
-                container, stdout=True,
-                stderr=False).decode('utf-8') if self.compile else self.get(
-                    container=container, path='/result/', filename='stdout')
-            stderr = self.client.logs(
-                container, stdout=False,
-                stderr=True).decode('utf-8') if self.compile else self.get(
-                    container=container, path='/result/', filename='stderr')
+            result = self.get(container=container,
+                              path='/result/',
+                              filename='result').split('\n')
+            stdout = self.get(container=container,
+                              path='/result/',
+                              filename='stdout')
+            stderr = self.get(container=container,
+                              path='/result/',
+                              filename='stderr')
         except:
             self.client.remove_container(container, v=True, force=True)
-            return {'Status': 'SE'}
+            return {'Status': 'JE'}
 
         self.client.remove_container(container, v=True, force=True)
+
         return {
             'Status': result[0],
             'Duration': int(result[2]),
