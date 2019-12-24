@@ -29,36 +29,29 @@ class SubmissionRunner():
         # working_dir
         self.working_dir = config['working_dir']
         # for language specified settings
-        self.compile_argument = config['compile_argument']
-        self.execute_argument = config['execute_argument']
+        self.lang_id = config['lang_id']
         self.image = config['image']
 
     def compile(self):
-        compile_command = self.compile_argument[self.lang]
         # compile must be done in 10 seconds
         s = Sandbox(
             time_limit=10000,  # 10s
             mem_limit=1048576,  # 1GB
             image=self.image[self.lang],
             src_dir=f'{self.working_dir}/{self.submission_id}/src',
-            command=compile_command,
-            compile=True)
+            lang_id=self.lang_id[self.lang],
+            compile_need=1)
         result = s.run()
-        # Status Process
-        if result['DockerExitCode']:
-            result['Status'] = 'CE'
-        else:
-            result['Status'] = 'Pass'
+        result['Status'] = 'AC' if result['Status'] == 'Exited Normally' else 'CE'
         return result
 
     def run(self):
-        execute_command = f'{self.execute_argument[self.lang]}'
         s = Sandbox(time_limit=self.time_limit,
                     mem_limit=self.mem_limit,
                     image=self.image[self.lang],
                     src_dir=f'{self.working_dir}/{self.submission_id}/src',
-                    command=execute_command,
-                    compile=False,
+                    lang_id=self.lang_id[self.lang],
+                    compile_need=0,
                     stdin_path=self.testdata_input_path)
         result = s.run()
         # Status Process
