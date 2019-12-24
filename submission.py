@@ -42,7 +42,8 @@ class SubmissionRunner():
             lang_id=self.lang_id[self.lang],
             compile_need=1)
         result = s.run()
-        result['Status'] = 'AC' if result['Status'] == 'Exited Normally' else 'CE'
+        result[
+            'Status'] = 'AC' if result['Status'] == 'Exited Normally' else 'CE'
         return result
 
     def run(self):
