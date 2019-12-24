@@ -5,7 +5,7 @@ FROM python:3.7.5-alpine3.9
 MAINTAINER Normal-OJ
 
 # sandbox user with uid:1450 home:/sandbox D:no passwd
-RUN adduser sandbox -h /sandbox -u 1450 -D
+RUN adduser sandbox -u 1450 -D
 
 # result folder
 RUN mkdir /result

@@ -1,21 +1,18 @@
 # for c_cpp
 
 FROM alpine
-# FROM ubuntu
 
 MAINTAINER Normal-OJ
 
 # install g++
 RUN apk add --no-cache g++
-# RUN apt update
-# RUN apt install build-essential -y
 
-# sandbox user with uid:1450 home:/sandbox D:no passwd
-RUN adduser sandbox -h /sandbox -u 1450 -D
-# RUN useradd sandbox -d /sandbox -u 1450
+# sandbox user with uid:1450 D:no passwd
+RUN adduser sandbox -u 1450 -D
 
 # result folder
 RUN mkdir /result
 
 # sandbox binary
 COPY sandbox /usr/bin/
+
