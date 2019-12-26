@@ -1,5 +1,5 @@
 import pytest
-from dispatcher import Dispatcher
+from dispatcher.dispatcher import Dispatcher
 
 TEST_CONFIG_PATH = '.config/dispatcher.test.json'
 

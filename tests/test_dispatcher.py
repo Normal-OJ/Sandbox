@@ -1,4 +1,5 @@
-from dispatcher import Dispatcher
+from dispatcher.dispatcher import Dispatcher
+from dispatcher.exception import *
 from tests.submission_generator import SubmissionGenerator
 
 
@@ -52,6 +53,10 @@ class TestDispatcher:
         assert docker_dispatcher.handle(
             _id,
             TestDispatcher.generator.problem[prob]['meta']['lang']) is True
-        assert docker_dispatcher.handle(
-            _id,
-            TestDispatcher.generator.problem[prob]['meta']['lang']) is False
+
+        try:
+            docker_dispatcher.handle(
+                _id, TestDispatcher.generator.problem[prob]['meta']['lang'])
+        except DuplicatedSubmissionIdError:
+            return
+        assert False
