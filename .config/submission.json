@@ -7,8 +7,8 @@
 		"python3": 2
 	},
 	"image": {
-		"c11": "c_cpp",
-		"cpp11": "c_cpp",
-		"python3": "python3"
+		"c11": "noj-c-cpp",
+		"cpp11": "noj-c-cpp",
+		"python3": "noj-py3"
 	}
 }
