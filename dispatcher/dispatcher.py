@@ -1,12 +1,14 @@
-import docker
 import json
 import os
 import threading
 import time
 import requests
+import logging
+import pathlib
 
 from queue import Queue
 from submission import SubmissionRunner
+from .exception import *
 
 
 class Dispatcher(threading.Thread):
@@ -14,22 +16,25 @@ class Dispatcher(threading.Thread):
         super().__init__()
 
         # read config
-        with open('.config/dispatcher.json') as f:
-            config = json.load(f)
+        config = {}
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                config = json.load(f)
 
         # flag to decided whether the thread should run
         self.do_run = True
 
         # http handler URL
         self.HTTP_HANDLER_URL = config.get('HTTP_HANDLER_URL',
-                                           'localhost:8888')
+                                           'localhost:1450')
 
         # submission location
-        self.SUBMISSION_DIR = config.get('SUBMISSION_DIR', './submissions')
+        self.SUBMISSION_DIR = pathlib.Path(
+            config.get('SUBMISSION_DIR', './submissions'))
 
         # task queue
         # type Queue[Tuple[submission_id, task_no]]
-        self.MAX_TASK_COUNT = config.get('QUEUE_SIZE', 1)
+        self.MAX_TASK_COUNT = config.get('QUEUE_SIZE', 16)
         self.queue = Queue(self.MAX_TASK_COUNT)
         self.task_count = 0
 
@@ -38,7 +43,7 @@ class Dispatcher(threading.Thread):
         self.result = {}
 
         # manage containers
-        self.MAX_CONTAINER_SIZE = config.get('MAX_CONTAINER_NUMBER', 1)
+        self.MAX_CONTAINER_SIZE = config.get('MAX_CONTAINER_NUMBER', 8)
         self.container_count = 0
 
     def handle(self, submission_id, lang):
@@ -53,7 +58,9 @@ class Dispatcher(threading.Thread):
         Returns:
             a bool denote whether the submission has successfully put into queue
         '''
-        submission_path = f'{self.SUBMISSION_DIR}/{submission_id}'
+        logging.info(f'receive submission {submission_id}.')
+
+        submission_path = self.SUBMISSION_DIR / submission_id
 
         # check whether the submission directory exist
         if not os.path.exists(submission_path):
@@ -64,8 +71,8 @@ class Dispatcher(threading.Thread):
 
         # duplicated
         if submission_id in self.result:
-            print('duplicated submission id.')
-            return False
+            raise DuplicatedSubmissionIdError(
+                f'duplicated submission id {submission_id}.')
 
         # read submission meta
         with open(f'{submission_path}/testcase/meta.json') as f:
@@ -75,13 +82,12 @@ class Dispatcher(threading.Thread):
         task_count = len(submission_config['cases'])
 
         if self.task_count + task_count >= self.MAX_TASK_COUNT:
-            print('Queue is full now.')
-            return False
+            raise Queue.FUll
 
         for i in range(task_count):
             self.queue.put((submission_id, i))
 
-        self.result[submission_id] = (submission_config, [])
+        self.result[submission_id] = (submission_config, [None] * task_count)
 
         return True
 
@@ -99,32 +105,33 @@ class Dispatcher(threading.Thread):
                 task_info = submission_config['cases'][task_id]
 
                 # read task's stdin and stdout
-                base_path = f'{self.SUBMISSION_DIR}/{submission_id}/testcase/{task_id}'
-                with open(f'{base_path}/in') as f:
-                    task_in = f.read()
-                with open(f'{base_path}/out') as f:
-                    task_out = f.read()
+                base_path = self.SUBMISSION_DIR / submission_id / 'testcase' / str(
+                    task_id)
+
+                logging.info(f'create container for {submission_id}/{task_id}')
 
                 # assign a new runner
-                threading.Thread(
-                    target=self.create_container,
-                    args=(submission_id, task_id, task_info['memoryLimit'],
-                          task_info['timeLimit'], task_in, task_out,
-                          submission_config['lang'])).start()
+                threading.Thread(target=self.create_container,
+                                 args=(submission_id, task_id,
+                                       task_info['memoryLimit'],
+                                       task_info['timeLimit'],
+                                       str((base_path / 'in').absolute()),
+                                       str((base_path / 'out').absolute()),
+                                       submission_config['lang'])).start()
 
     def stop(self):
         self.do_run = False
 
     def create_container(self, submission_id, task_id, mem_limit, time_limit,
-                         case_in, case_out, lang):
+                         case_in_path, case_out_path, lang):
         self.container_count += 1
-
         runner = SubmissionRunner(submission_id,
                                   time_limit,
                                   mem_limit,
-                                  case_in,
-                                  case_out,
+                                  case_in_path,
+                                  case_out_path,
                                   lang=lang)
+
         if lang in {'c11', 'cpp11'}:
             res = runner.compile()
         else:
@@ -133,67 +140,75 @@ class Dispatcher(threading.Thread):
         if res['Status'] != 'CE':
             res = runner.run()
 
-        self.container_count -= 1
+        logging.debug(f'finish task {submission_id}/{task_id}')
+        logging.debug(f'res: {res}')
 
+        self.container_count -= 1
         self.on_sub_task_complete(
             submission_id=submission_id,
+            task_id=task_id,
             stdout=res['Stdout'],
             stderr=res['Stderr'],
-            exit_code=res['ExitCode'],
+            exit_code=res['DockerExitCode'],
             score=self.result[submission_id][0]['cases'][task_id]['caseScore'],
-            exec_time='',
-            mem_usage='',
-            prob_status='')
+            exec_time=res['Duration'],
+            mem_usage=res['MemUsage'],
+            prob_status=res['Status'])
 
-    def on_sub_task_complete(self, submission_id, stdout, stderr, exit_code,
-                             score, exec_time, mem_usage, prob_status):
+    def on_sub_task_complete(self, submission_id, task_id, stdout, stderr,
+                             exit_code, score, exec_time, mem_usage,
+                             prob_status):
         # if id not exists
         if submission_id not in self.result:
-            print('Unexisted id recieved')
-            return False
+            raise SubmissionIdNotFoundError(
+                f'Unexisted id {submission_id} recieved')
 
-        info = self.result[submission_id][0]
-        results = self.result[submission_id][1]
-        results.append({
+        info, results = self.result[submission_id]
+        if task_id >= len(info['cases']):
+            raise ValueError(
+                f'task number {task_id} in {submission_id} more than excepted.'
+            )
+
+        results[task_id] = {
             'stdout': stdout,
             'stderr': stderr,
-            'exit_code': exit_code,
-            'score': score,
-            'exec_time': exec_time,
-            'mem_usage': mem_usage,
-            'prob_status': prob_status
-        })
+            'exitCode': exit_code,
+            'execTime': exec_time,
+            'memoryUsage': mem_usage,
+            'status': prob_status,
+            'score': score
+        }
 
-        if len(results) > len(info['cases']):
-            print('task number more than excepted.')
-            return False
-        elif len(results) == len(info['cases']):
+        logging.debug(f'current sub task result: {results}')
+        if all(results):
             self.on_submission_complete(submission_id)
+
         return True
 
     def on_submission_complete(self, submission_id):
-        endpoint = f'{self.HTTP_HANDLER_URL}/result'
+        if submission_id not in self.result:
+            raise SubmissionIdNotFoundError(f'{submission_id} not found!')
+
+        endpoint = f'{self.HTTP_HANDLER_URL}/result/{submission_id}'
+        info, results = self.result[submission_id]
         submission_data = {
-            ## not implementated yet
-            # 'stdout': stdout,
-            # 'stderr': stderr,
-            # 'exitCode': exit_code,
-            # 'score': score,
-            # 'execTime': exec_time,
-            # 'memoryUsage': mem_usage,
-            # 'problemStatusId': prob_status,
-            # 'toekn': token
+            'score': sum(x['score'] for x in results),
+            'status': results[-1]['status'],
+            'cases': results
         }
-        res = requests.post(endpoint, data=submission_data)
+        for result in results:
+            del result['score']
+
+        logging.debug(f'{submission_id} send to http handler ({endpoint})')
+        res = requests.post(endpoint, json=submission_data)
+
+        logging.info(f'finish submission {submission_id}')
+
         # remove this submission
         del self.result[submission_id]
-        # TODO: should i clean submission files here?
 
         if res.status_code != 200:
             # TODO: error log here, maybe
+            logging.warning('dispatcher receive')
             return False
         return True
-
-
-if __name__ == "__main__":
-    dispatcher = Dispatcher()
