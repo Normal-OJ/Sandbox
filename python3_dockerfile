@@ -4,6 +4,9 @@ FROM python:3.7.5-alpine3.9
 
 MAINTAINER Normal-OJ
 
+# install seccomp
+RUN apk add --no-cache libseccomp
+
 # sandbox user with uid:1450 home:/sandbox D:no passwd
 RUN adduser sandbox -u 1450 -D
 
