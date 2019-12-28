@@ -1,14 +1,20 @@
 # for python3
 
-FROM python:3.7.5-alpine3.9
+FROM ubuntu:18.04
 
 MAINTAINER Normal-OJ
 
-# install seccomp
-RUN apk add --no-cache libseccomp
+# update
+RUN apt-get update -y
 
-# sandbox user with uid:1450 home:/sandbox D:no passwd
-RUN adduser sandbox -u 1450 -D
+# install seccomp
+RUN apt-get install seccomp -y
+
+# install python3
+RUN apt-get install python3 -y
+
+# sandbox user with uid:1450
+RUN useradd sandbox -u 1450
 
 # result folder
 RUN mkdir /result
