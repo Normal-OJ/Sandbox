@@ -48,7 +48,7 @@ def submit(submission_id):
 
     languages = ['c', 'cpp', 'py']
     zip_dir = TMP_DIR / submission_id
-    zip_dir.mkdir()
+    zip_dir.mkdir(exist_ok=True)
 
     checker = request.values['checker']
     try:
@@ -127,9 +127,9 @@ def submit(submission_id):
             # read file
             with open(submission_dir / 'testcase' / 'meta.json',
                       'r') as myfile:
-                data = myfile.read()
+                obj = json.load(myfile)
+
             # parse file
-            obj = json.loads(data)
             value = obj['cases'][0]
             if type(value['caseScore']) == int and \
                 type(value['memoryLimit']) == int and \

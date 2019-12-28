@@ -141,18 +141,18 @@ class Dispatcher(threading.Thread):
             res = runner.run()
 
         logging.debug(f'finish task {submission_id}/{task_id}')
-        logging.debug(f'res: {res}')
+        logging.debug(f'get submission runner res: {res}')
 
         self.container_count -= 1
         self.on_sub_task_complete(
             submission_id=submission_id,
             task_id=task_id,
-            stdout=res['Stdout'],
-            stderr=res['Stderr'],
-            exit_code=res['DockerExitCode'],
+            stdout=res.get('Stdout', ''),
+            stderr=res.get('Stderr', ''),
+            exit_code=res.get('DockerExitCode', -1),
             score=self.result[submission_id][0]['cases'][task_id]['caseScore'],
-            exec_time=res['Duration'],
-            mem_usage=res['MemUsage'],
+            exec_time=res.get('Duration', -1),
+            mem_usage=res.get('MemUsage', -1),
             prob_status=res['Status'])
 
     def on_sub_task_complete(self, submission_id, task_id, stdout, stderr,
@@ -176,7 +176,7 @@ class Dispatcher(threading.Thread):
             'execTime': exec_time,
             'memoryUsage': mem_usage,
             'status': prob_status,
-            'score': score
+            'score': score if prob_status == 'AC' else 0
         }
 
         logging.debug(f'current sub task result: {results}')
