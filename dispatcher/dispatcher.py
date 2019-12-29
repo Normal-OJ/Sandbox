@@ -30,7 +30,7 @@ class Dispatcher(threading.Thread):
 
         # submission location
         self.SUBMISSION_DIR = pathlib.Path(
-            config.get('SUBMISSION_DIR', './submissions'))
+            config.get('SUBMISSION_DIR', 'submissions'))
 
         # task queue
         # type Queue[Tuple[submission_id, task_no]]
@@ -105,19 +105,31 @@ class Dispatcher(threading.Thread):
                 task_info = submission_config['cases'][task_id]
 
                 # read task's stdin and stdout
+                logging.info(f'create container for {submission_id}/{task_id}')
                 base_path = self.SUBMISSION_DIR / submission_id / 'testcase' / str(
                     task_id)
+                out_path = str((base_path / 'out').absolute())
 
-                logging.info(f'create container for {submission_id}/{task_id}')
+                base_path = pathlib.Path(
+                    '/home/bogay/Normal-OJ/Sandbox/submissions'
+                ) / submission_id / 'testcase' / str(task_id)
+
+                in_path = str((base_path / 'in').absolute())
+
+                logging.debug('in path: ' + in_path)
+                logging.debug('out path: ' + out_path)
 
                 # assign a new runner
                 threading.Thread(target=self.create_container,
-                                 args=(submission_id, task_id,
-                                       task_info['memoryLimit'],
-                                       task_info['timeLimit'],
-                                       str((base_path / 'in').absolute()),
-                                       str((base_path / 'out').absolute()),
-                                       submission_config['lang'])).start()
+                                 args=(
+                                     submission_id,
+                                     task_id,
+                                     task_info['memoryLimit'],
+                                     task_info['timeLimit'],
+                                     in_path,
+                                     out_path,
+                                     submission_config['lang'],
+                                 )).start()
 
     def stop(self):
         self.do_run = False
