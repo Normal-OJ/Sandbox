@@ -61,7 +61,7 @@ class SubmissionRunner():
         # Status Process
         with open(self.testdata_output_path, 'r') as f:
             ans_output = f.read()
-        status = ['TLE', 'MLE', 'RE', 'OLE', 'SE']
+        status = ['TLE', 'MLE', 'RE', 'OLE', 'JE']
         if not result['Status'] in status:
             result['Status'] = 'AC' if result['Stdout'] == ans_output else 'WA'
         return result
