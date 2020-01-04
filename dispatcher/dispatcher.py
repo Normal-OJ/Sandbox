@@ -46,6 +46,11 @@ class Dispatcher(threading.Thread):
         self.MAX_CONTAINER_SIZE = config.get('MAX_CONTAINER_NUMBER', 8)
         self.container_count = 0
 
+        # read cwd from submission runner config
+        with open('.config/submission.json') as f:
+            s_config = json.load(f)
+            self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
+
     def handle(self, submission_id, lang):
         '''
         handle a submission, save its config and push into task queue
@@ -110,9 +115,8 @@ class Dispatcher(threading.Thread):
                     task_id)
                 out_path = str((base_path / 'out').absolute())
 
-                base_path = pathlib.Path(
-                    '/home/bogay/Normal-OJ/Sandbox/submissions'
-                ) / submission_id / 'testcase' / str(task_id)
+                base_path = self.submission_runner_cwd / submission_id / 'testcase' / str(
+                    task_id)
 
                 in_path = str((base_path / 'in').absolute())
 
@@ -120,16 +124,18 @@ class Dispatcher(threading.Thread):
                 logging.debug('out path: ' + out_path)
 
                 # assign a new runner
-                threading.Thread(target=self.create_container,
-                                 args=(
-                                     submission_id,
-                                     task_id,
-                                     task_info['memoryLimit'],
-                                     task_info['timeLimit'],
-                                     in_path,
-                                     out_path,
-                                     submission_config['lang'],
-                                 )).start()
+                threading.Thread(
+                    target=self.create_container,
+                    args=(
+                        submission_id,
+                        task_id,
+                        task_info['memoryLimit'],
+                        task_info['timeLimit'],
+                        in_path,
+                        out_path,
+                        submission_config['lang'],
+                    ),
+                ).start()
 
     def stop(self):
         self.do_run = False
