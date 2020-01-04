@@ -1,0 +1,5 @@
+{
+    "QUEUE_SIZE": 1024,
+    "MAX_CONTAINER_NUMBER": 500,
+    "HTTP_HANDLER_URL": "http://localhost:1450"
+}

@@ -1,0 +1,14 @@
+{
+	"working_dir": "/home/as535364/桌面/playground/submissions",
+	"docker_url": "unix://var/run/docker.sock",
+	"lang_id": {
+		"c11": 0,
+		"cpp11": 1,
+		"python3": 2
+	},
+	"image": {
+		"c11": "noj-c-cpp",
+		"cpp11": "noj-c-cpp",
+		"python3": "noj-py3"
+	}
+}
