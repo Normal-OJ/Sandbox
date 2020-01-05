@@ -1,5 +1,3 @@
-# TODO: use pytest.Testdir to isolate the test datas
-
 import os
 import random
 import json

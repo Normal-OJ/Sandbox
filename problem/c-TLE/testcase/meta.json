@@ -1,0 +1,14 @@
+{
+    "cases": [
+        {
+            "caseScore": 50,
+            "memoryLimit": 1024,
+            "timeLimit": 1000
+        },
+        {
+            "caseScore": 50,
+            "memoryLimit": 1024,
+            "timeLimit": 1000
+        }
+    ]
+}

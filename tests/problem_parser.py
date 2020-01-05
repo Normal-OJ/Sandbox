@@ -12,6 +12,7 @@ class ProblemParser:
             raise NotADirectoryError(f'{data_path} is not a directory')
 
         self.data_path = data_path
+        # Dict[problem_name, problem_data]
         self.problem = {}
 
     def parse(self):
