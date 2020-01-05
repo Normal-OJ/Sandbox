@@ -12,6 +12,7 @@ def docker_dispatcher(tmp_path):
     # create a dispatcer in test config
     d = Dispatcher(TEST_CONFIG_PATH)
     d.SUBMISSION_DIR = tmp_path / d.SUBMISSION_DIR
+    d.testing = True
     yield d
     # ensure we stop the dispatcher after every function call
     d.stop()

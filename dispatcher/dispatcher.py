@@ -5,8 +5,8 @@ import time
 import requests
 import logging
 import pathlib
+import queue
 
-from queue import Queue
 from submission import SubmissionRunner
 from .exception import *
 
@@ -35,7 +35,7 @@ class Dispatcher(threading.Thread):
         # task queue
         # type Queue[Tuple[submission_id, task_no]]
         self.MAX_TASK_COUNT = config.get('QUEUE_SIZE', 16)
-        self.queue = Queue(self.MAX_TASK_COUNT)
+        self.queue = queue.Queue(self.MAX_TASK_COUNT)
         self.task_count = 0
 
         # task result
@@ -45,6 +45,11 @@ class Dispatcher(threading.Thread):
         # manage containers
         self.MAX_CONTAINER_SIZE = config.get('MAX_CONTAINER_NUMBER', 8)
         self.container_count = 0
+
+        # read cwd from submission runner config
+        with open('.config/submission.json') as f:
+            s_config = json.load(f)
+            self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
 
     def handle(self, submission_id, lang):
         '''
@@ -81,11 +86,8 @@ class Dispatcher(threading.Thread):
 
         task_count = len(submission_config['cases'])
 
-        if self.task_count + task_count >= self.MAX_TASK_COUNT:
-            raise Queue.FUll
-
         for i in range(task_count):
-            self.queue.put((submission_id, i))
+            self.queue.put_nowait((submission_id, i))
 
         self.result[submission_id] = (submission_config, [None] * task_count)
 
@@ -100,6 +102,11 @@ class Dispatcher(threading.Thread):
                 self.container_count < self.MAX_CONTAINER_SIZE:
                 # get a task
                 submission_id, task_id = self.queue.get()
+
+                if submission_id not in self.result:
+                    logging.info(f'discarded task {submission_id}/{task_id}')
+                    continue
+
                 # get task info
                 submission_config = self.result[submission_id][0]
                 task_info = submission_config['cases'][task_id]
@@ -110,9 +117,8 @@ class Dispatcher(threading.Thread):
                     task_id)
                 out_path = str((base_path / 'out').absolute())
 
-                base_path = pathlib.Path(
-                    '/home/bogay/Normal-OJ/Sandbox/submissions'
-                ) / submission_id / 'testcase' / str(task_id)
+                base_path = self.submission_runner_cwd / submission_id / 'testcase' / str(
+                    task_id)
 
                 in_path = str((base_path / 'in').absolute())
 
@@ -120,16 +126,18 @@ class Dispatcher(threading.Thread):
                 logging.debug('out path: ' + out_path)
 
                 # assign a new runner
-                threading.Thread(target=self.create_container,
-                                 args=(
-                                     submission_id,
-                                     task_id,
-                                     task_info['memoryLimit'],
-                                     task_info['timeLimit'],
-                                     in_path,
-                                     out_path,
-                                     submission_config['lang'],
-                                 )).start()
+                threading.Thread(
+                    target=self.create_container,
+                    args=(
+                        submission_id,
+                        task_id,
+                        task_info['memoryLimit'],
+                        task_info['timeLimit'],
+                        in_path,
+                        out_path,
+                        submission_config['lang'],
+                    ),
+                ).start()
 
     def stop(self):
         self.do_run = False
@@ -200,6 +208,8 @@ class Dispatcher(threading.Thread):
     def on_submission_complete(self, submission_id):
         if submission_id not in self.result:
             raise SubmissionIdNotFoundError(f'{submission_id} not found!')
+        if self.testing:
+            return True
 
         endpoint = f'{self.HTTP_HANDLER_URL}/result/{submission_id}'
         info, results = self.result[submission_id]
@@ -220,7 +230,9 @@ class Dispatcher(threading.Thread):
         del self.result[submission_id]
 
         if res.status_code != 200:
-            # TODO: error log here, maybe
-            logging.warning('dispatcher receive')
+            logging.warning(
+                'dispatcher receive err'
+                f'status code: {res.status_code}\n'
+                f'msg: {res.text}', )
             return False
         return True

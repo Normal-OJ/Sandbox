@@ -6,6 +6,7 @@ import pathlib
 import logging
 import shutil
 import requests
+import queue
 
 from logging.config import dictConfig
 from flask import Flask, request, jsonify
@@ -135,8 +136,18 @@ def submit(submission_id):
                 type(value['memoryLimit']) == int and \
                 type(value['timeLimit']) == int:
                 logger.debug(f'send submission {submission_id} to dispatcher')
-                DISPATCHER.handle(submission_id, ['c11', 'cpp11',
-                                                  'python3'][language_id])
+                try:
+                    DISPATCHER.handle(
+                        submission_id,
+                        ['c11', 'cpp11', 'python3'][language_id],
+                    )
+                except queue.Full:
+                    return jsonify({
+                        'status': 'err',
+                        'msg':
+                        'task queue is full now.\nplease wait a moment and re-send the submission.',
+                        'data': None,
+                    }), 500
                 return jsonify({'status': 'ok', 'msg': 'ok', 'data': 'ok'})
             else:
                 return "none int-400", 400
