@@ -8,6 +8,7 @@ TEST_CONFIG_PATH = '.config/dispatcher.test.json'
 def docker_dispatcher():
     # create a dispatcer in test config
     d = Dispatcher(TEST_CONFIG_PATH)
+    d.testing = True
     yield d
     # ensure we stop the dispatcher after every function call
     d.stop()
