@@ -16,6 +16,9 @@ jobs:
     - name: Upgrade pip
       run: |
         python -m pip install --upgrade pip
+    - name: Install sandbox requirements
+      run: |
+        ./build.sh
     - name: YAPF
       run: |
         pip install yapf
