@@ -14,6 +14,7 @@ from .exception import *
 class Dispatcher(threading.Thread):
     def __init__(self, config_path='.config/dispatcher.json'):
         super().__init__()
+        self.testing = False
 
         # read config
         config = {}
@@ -31,12 +32,12 @@ class Dispatcher(threading.Thread):
         # submission location
         self.SUBMISSION_DIR = pathlib.Path(
             config.get('SUBMISSION_DIR', 'submissions'))
+        self.SUBMISSION_DIR.mkdir(exist_ok=True)
 
         # task queue
         # type Queue[Tuple[submission_id, task_no]]
         self.MAX_TASK_COUNT = config.get('QUEUE_SIZE', 16)
         self.queue = queue.Queue(self.MAX_TASK_COUNT)
-        self.task_count = 0
 
         # task result
         # type: Dict[submission_id, Tuple[submission_info, List[result]]]
