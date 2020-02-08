@@ -46,111 +46,88 @@ cookies = {}
 def submit(submission_id):
     # get cookies
     cookies[submission_id] = request.cookies
+    checker = request.values['checker']
 
-    languages = ['c', 'cpp', 'py']
     zip_dir = TMP_DIR / submission_id
     zip_dir.mkdir(exist_ok=True)
-
-    checker = request.values['checker']
-    try:
-        # 0:C, 1:C++, 2:python3
-        language_id = int(request.values['languageId'])
-        language_type = languages[language_id]
-    except ValueError:
-        return 'invalid language id', 400
-    except IndexError:
-        return "language id wrong-400", 400
-
-    token = request.values['token']
-    tokens[submission_id] = token
-    while type(submission_id) != str:
-        return "submission id wrong-400", 400
 
     submission_dir = SUBMISSION_DIR / submission_id
     submission_dir.mkdir()
 
-    code = request.files['code']  # get file
-    code_path = zip_dir / 'code.zip'
+    # meta
+    meta = request.files['meta.json']
+    meta.save(submission_dir / 'meta.json')
+    meta = json.load(meta)
+    # check format
+    for task in meta['tasks']:
+        ks = [
+            'taskScore',
+            'memoryLimit',
+            'timeLimit',
+            'caseCount',
+        ]
+        for k in ks:
+            if k not in task or type(task[k]) != int:
+                return 'wrong meta.json schema', 400
+
+    # 0:C, 1:C++, 2:python3
+    languages = ['c', 'cpp', 'py']
+    try:
+        language_id = meta['language']
+        language_type = languages[language_id]
+    except ValueError:
+        return 'invalid language id', 400
+    except IndexError:
+        return 'language id wrong', 400
+    except KeyError:
+        return 'no language specified', 400
+
+    token = request.values['token']
+    tokens[submission_id] = token
+
+    code = request.files['src']  # get file
+    code_path = zip_dir / 'src.zip'
     code.save(str(code_path))  # save file
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
-    archive = zipfile.ZipFile(code_path, 'r')
-    # file_name=archive.filename.split('.')[0]#filename
-    archive.extractall(str(code_dir))
-    archive.close()
+    with zipfile.ZipFile(code_path, 'r') as zf:
+        zf.extractall(code_path)
 
     # extract testcase zip
     testcase = request.files['testcase']
-    testcase_zip = zip_dir / 'testcase.zip'
-    testcase.save(str(testcase_zip))
+    testcase_path = zip_dir / 'testcase.zip'
+    testcase.save(str(testcase_path))
     testcase_dir = submission_dir / 'testcase'
     testcase_dir.mkdir()
-    with zipfile.ZipFile(testcase_zip, 'r') as f:
+    with zipfile.ZipFile(testcase_path, 'r') as f:
         f.extractall(str(testcase_dir))
 
-    # archize_src = zipfile.ZipFile(TMP_DIR+submission_id+'/src.zip', 'r')
-    # archize_src.extractall(TMP_DIR+submission_id)
-    # archize_src.close()
-
-    # archize_testcase = zipfile.ZipFile(
-    #     TMP_DIR+submission_id+'/testcase.zip', 'r')
-    # archize_testcase.extractall(TMP_DIR+submission_id)
-    # archize_testcase.close()
-
-    # len(['1','2','3'])
-    if len(os.listdir(submission_dir / 'src')) == 0:
-        return "under src does not have any file-400", 400
+    # check source code
+    if len([*code_dir.iterdir()]) == 0:
+        return 'under src does not have any file', 400
     else:
-        for files in (submission_dir / 'src').iterdir():
-            file_name = files.name.split('.')[0]  # get file name
-            if file_name != 'main':
-                return 'none main-400', 400
+        for _file in code_dir.iterdir():
+            if _file.stem != 'main':
+                return 'none main', 400
 
-            which_file = files.name.split('.')[1]  # 'py'
-            if which_file != language_type:
-                return 'data type is not match-400', 400
+            if _file.suffix != language_type:
+                return 'data type is not match', 400
 
-            # target_path_in_0 = r"C:\test\12345678\0\*.in"
-            # target_path_out_0 = r"C:\test\12345678\0\*.out"
-            # target_path_in_1 = r"C:\test\12345678\1\*.in"
-            # target_path_out_1 = r"C:\test\12345678\1\*.out"
-            # folder_in_0 = glob.glob(target_path_in_0)
-            # folder_out_0 = glob.glob(target_path_out_0)
-            # folder_in_1 = glob.glob(target_path_in_1)
-            # folder_out_1 = glob.glob(target_path_out_1)
-
-            # if len(folder_in_0) != len(folder_out_0) or len(folder_in_1) != len(folder_out_1):
-            #     return "0 diff 1-400", 400
-
-            if not (os.path.isfile(submission_dir / 'testcase' / 'meta.json')):
-                return "no meta data-400", 400
-
-            # read file
-            with open(submission_dir / 'testcase' / 'meta.json',
-                      'r') as myfile:
-                obj = json.load(myfile)
-
-            # parse file
-            value = obj['cases'][0]
-            if type(value['caseScore']) == int and \
-                type(value['memoryLimit']) == int and \
-                type(value['timeLimit']) == int:
-                logger.debug(f'send submission {submission_id} to dispatcher')
-                try:
-                    DISPATCHER.handle(
-                        submission_id,
-                        ['c11', 'cpp11', 'python3'][language_id],
-                    )
-                except queue.Full:
-                    return jsonify({
-                        'status': 'err',
-                        'msg':
-                        'task queue is full now.\nplease wait a moment and re-send the submission.',
-                        'data': None,
-                    }), 500
-                return jsonify({'status': 'ok', 'msg': 'ok', 'data': 'ok'})
-            else:
-                return "none int-400", 400
+    logger.debug(f'send submission {submission_id} to dispatcher')
+    try:
+        DISPATCHER.handle(submission_id)
+    except queue.Full:
+        return jsonify({
+            'status': 'err',
+            'msg': 'task queue is full now.\n'
+            'please wait a moment and re-send the submission.',
+            'data': None,
+        }), 500
+    return jsonify({
+        'status': 'ok',
+        'msg': 'ok',
+        'data': 'ok',
+    })
 
 
 def clean_data(submission_id):
@@ -168,14 +145,15 @@ def recieve_result(submission_id):
     for case in post_data['cases']:
         case['status'] = tb.index(case['status'])
 
-    resp = requests.put(
-        f'{BACKEND_API}/submission/{submission_id}?token={tokens[submission_id]}',
-        json=post_data,
-        cookies=cookies[submission_id])
-
     logger.info(f'send {submission_id} to BE server')
     logger.debug(f'send json: f{post_data}')
     logger.debug(f'cookies: f{cookies[submission_id]}')
+
+    resp = requests.put(
+        f'{BACKEND_API}/submission/{submission_id}?token={tokens[submission_id]}',
+        json=post_data,
+        cookies=cookies[submission_id],
+    )
     logger.debug(f'resp: {resp.text}')
 
     # clear
