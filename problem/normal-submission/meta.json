@@ -1,0 +1,16 @@
+{
+    "language": 2,
+    "tasks": [{
+            "taskScore": 50,
+            "memoryLimit": 1024,
+            "timeLimit": 1000,
+            "caseCount": 1
+        },
+        {
+            "taskScore": 50,
+            "memoryLimit": 1024,
+            "timeLimit": 1000,
+            "caseCount": 1
+        }
+    ]
+}

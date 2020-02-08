@@ -82,8 +82,8 @@ class Dispatcher(threading.Thread):
             submission_config = json.load(f)
 
         task_content = {}
-        for i, task in submission_config['tasks']:
-            for j in range(submission_config['tasks'][i]['caseCount']):
+        for i, task in enumerate(submission_config['tasks']):
+            for j in range(task['caseCount']):
                 case_no = f'{i:02d}{j:02d}'
                 task_content[case_no] = None
                 # put (submission_id, case_no)
@@ -149,6 +149,7 @@ class Dispatcher(threading.Thread):
         lang,
     ):
         self.container_count += 1
+        lang = ['c11', 'cpp11', 'python3'][lang]
         runner = SubmissionRunner(
             submission_id,
             time_limit,

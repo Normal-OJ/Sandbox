@@ -6,13 +6,13 @@ from tests.problem_parser import ProblemParser
 
 
 class SubmissionGenerator:
-    def __init__(self,
-                 submission_path='submissions',
-                 problem_parser=None,
-                 up=10**8,
-                 down=0):
-        super().__init__()
-
+    def __init__(
+        self,
+        submission_path='submissions',
+        problem_parser=None,
+        up=10**8,
+        down=0,
+    ):
         # prepare submission folder
         self.submission_path = pathlib.Path(submission_path)
         if not self.submission_path.exists():
@@ -33,7 +33,6 @@ class SubmissionGenerator:
         self.up = up
         self.down = down
 
-    @property
     def gen_submission_id(self):
         return str(random.randint(self.down, self.up))
 
@@ -45,41 +44,42 @@ class SubmissionGenerator:
         if prob_name is None:
             prob_name = random.choice(self.problem.keys())
         if submission_id is None:
-            submission_id = self.gen_submission_id
+            submission_id = self.gen_submission_id()
             while submission_id in self.submission_ids:
-                submission_id = self.gen_submission_id
+                submission_id = self.gen_submission_id()
             self.submission_ids[submission_id] = prob_name
 
         prob_data = self.problem[prob_name]
-        prob_base_dir = f'{self.submission_path}/{submission_id}'
-        os.mkdir(prob_base_dir)
+        prob_base_dir = self.submission_path / submission_id
+        prob_base_dir.mkdir()
 
         # write source
-        os.mkdir(f'{prob_base_dir}/src')
+        os.mkdir(prob_base_dir / 'src')
         for src in prob_data['source']:
             with open(f'{prob_base_dir}/src/{src}', 'w') as f:
                 f.write(prob_data['source'][src])
 
         # write testcase
-        os.mkdir(f'{prob_base_dir}/testcase')
-        for i in range(len(prob_data['meta']['cases'])):
-            os.mkdir(f'{prob_base_dir}/testcase/{i}')
-            with open(f'{prob_base_dir}/testcase/{i}/in', 'w') as f:
-                f.write(prob_data['testcase'][i]['in'])
-            with open(f'{prob_base_dir}/testcase/{i}/out', 'w') as f:
-                f.write(prob_data['testcase'][i]['out'])
+        testcase_dir = prob_base_dir / 'testcase'
+        testcase_dir.mkdir()
+        for i, task in enumerate(prob_data['meta']['tasks']):
+            for j in range(task['caseCount']):
+                with open(f'{testcase_dir}/{i:02d}{j:02d}.in', 'w') as f:
+                    f.write(prob_data['testcase'][i][j]['in'])
+                with open(f'{testcase_dir}/{i:02d}{j:02d}.out', 'w') as f:
+                    f.write(prob_data['testcase'][i][j]['out'])
 
         # write meta
-        with open(f'{prob_base_dir}/testcase/meta.json', 'w') as f:
-            f.write(json.dumps(prob_data['meta']))
+        with open(f'{prob_base_dir}/meta.json', 'w') as f:
+            json.dump(prob_data['meta'], f)
 
     def gen_all(self):
         # generate submission id
         submission_ids = set()
         while len(submission_ids) < len(self.problem):
-            submission_id = self.gen_submission_id
+            submission_id = self.gen_submission_id()
             while submission_id in self.submission_ids:
-                submission_id = self.gen_submission_id
+                submission_id = self.gen_submission_id()
             submission_ids.add(submission_id)
         submission_ids = list(submission_ids)
 
