@@ -98,42 +98,45 @@ class Dispatcher(threading.Thread):
         while True:
             if not self.do_run:
                 break
-            if not self.queue.empty() and \
-                self.container_count < self.MAX_CONTAINER_SIZE:
-                # get a case
-                submission_id, case_no = self.queue.get()
+            if self.queue.empty():
+                continue
+            if self.container_count >= self.MAX_CONTAINER_SIZE:
+                continue
 
-                if submission_id not in self.result:
-                    logging.info(f'discarded case {submission_id}/{case_no}')
-                    continue
+            # get a case
+            submission_id, case_no = self.queue.get()
 
-                # get task info
-                submission_config = self.result[submission_id][0]
-                task_info = submission_config['tasks'][int(case_no[:2])]
+            if submission_id not in self.result:
+                logging.info(f'discarded case {submission_id}/{case_no}')
+                continue
 
-                # read task's stdin and stdout
-                logging.info(f'create container for {submission_id}/{case_no}')
-                base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
-                out_path = str((base_path / f'{case_no}.out').absolute())
-                base_path = self.submission_runner_cwd / submission_id / 'testcase'
-                in_path = str((base_path / f'{case_no}.in').absolute())
+            # get task info
+            submission_config = self.result[submission_id][0]
+            task_info = submission_config['tasks'][int(case_no[:2])]
 
-                logging.debug('in path: ' + in_path)
-                logging.debug('out path: ' + out_path)
+            # read task's stdin and stdout
+            logging.info(f'create container for {submission_id}/{case_no}')
+            base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
+            out_path = str((base_path / f'{case_no}.out').absolute())
+            base_path = self.submission_runner_cwd / submission_id / 'testcase'
+            in_path = str((base_path / f'{case_no}.in').absolute())
 
-                # assign a new runner
-                threading.Thread(
-                    target=self.create_container,
-                    args=(
-                        submission_id,
-                        case_no,
-                        task_info['memoryLimit'],
-                        task_info['timeLimit'],
-                        in_path,
-                        out_path,
-                        submission_config['language'],
-                    ),
-                ).start()
+            logging.debug('in path: ' + in_path)
+            logging.debug('out path: ' + out_path)
+
+            # assign a new runner
+            threading.Thread(
+                target=self.create_container,
+                args=(
+                    submission_id,
+                    case_no,
+                    task_info['memoryLimit'],
+                    task_info['timeLimit'],
+                    in_path,
+                    out_path,
+                    submission_config['language'],
+                ),
+            ).start()
 
     def stop(self):
         self.do_run = False
@@ -167,7 +170,7 @@ class Dispatcher(threading.Thread):
         if res['Status'] != 'CE':
             res = runner.run()
 
-        logging.debug(f'finish task {submission_id}/{case_no}')
+        logging.info(f'finish task {submission_id}/{case_no}')
         logging.debug(f'get submission runner res: {res}')
 
         self.container_count -= 1
@@ -252,7 +255,7 @@ class Dispatcher(threading.Thread):
 
         if res.status_code != 200:
             logging.warning(
-                'dispatcher receive err'
+                'dispatcher receive err\n'
                 f'status code: {res.status_code}\n'
                 f'msg: {res.text}', )
             return False

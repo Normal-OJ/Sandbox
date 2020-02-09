@@ -7,6 +7,7 @@ import logging
 import shutil
 import requests
 import queue
+import secrets
 
 from logging.config import dictConfig
 from flask import Flask, request, jsonify
@@ -21,35 +22,50 @@ logger = app.logger
 # setup constant
 
 # data storage
-SUBMISSION_DIR = pathlib.Path(os.environ.get('SUBMISSION_DIR', 'submissions'))
-TMP_DIR = pathlib.Path(os.environ.get('TMP_DIR', '/tmp/submissions'))
+SUBMISSION_DIR = pathlib.Path(os.environ.get(
+    'SUBMISSION_DIR',
+    'submissions',
+))
+TMP_DIR = pathlib.Path(os.environ.get(
+    'TMP_DIR',
+    '/tmp/submissions',
+))
 
 # create directory
 SUBMISSION_DIR.mkdir(exist_ok=True)
 TMP_DIR.mkdir(exist_ok=True)
 
 # setup dispatcher
-DISPATCHER_CONFIG = os.environ.get('DISPATCHER_CONFIG',
-                                   '.config/dispatcher.json.example')
+DISPATCHER_CONFIG = os.environ.get(
+    'DISPATCHER_CONFIG',
+    '.config/dispatcher.json.example',
+)
 DISPATCHER = Dispatcher(DISPATCHER_CONFIG)
 DISPATCHER.start()
 
 # backend config
-BACKEND_PORT = os.environ.get('BACKEND_PORT', 8080)
-BACKEND_API = os.environ.get('BACKEND_API', f'http://web:{BACKEND_PORT}')
+BACKEND_PORT = os.environ.get(
+    'BACKEND_PORT',
+    8080,
+)
+BACKEND_API = os.environ.get(
+    'BACKEND_API',
+    f'http://web:{BACKEND_PORT}',
+)
 
-tokens = {}
-cookies = {}
+SANDBOX_TOKEN = os.getenv(
+    'SANDBOX_TOKEN',
+    'KoNoSandboxDa',
+)
 
 
 @app.route('/submit/<submission_id>', methods=['POST'])
 def submit(submission_id):
-    # get cookies
-    cookies[submission_id] = request.cookies
-    checker = request.values['checker']
+    token = request.values['token']
+    if not secrets.compare_digest(token, SANDBOX_TOKEN):
+        return 'invalid token', 403
 
-    zip_dir = TMP_DIR / submission_id
-    zip_dir.mkdir(exist_ok=True)
+    checker = request.values['checker']
 
     submission_dir = SUBMISSION_DIR / submission_id
     submission_dir.mkdir()
@@ -75,15 +91,13 @@ def submit(submission_id):
     try:
         language_id = meta['language']
         language_type = languages[language_id]
-    except ValueError:
+    except (ValueError, IndexError):
         return 'invalid language id', 400
-    except IndexError:
-        return 'language id wrong', 400
     except KeyError:
         return 'no language specified', 400
 
-    token = request.values['token']
-    tokens[submission_id] = token
+    zip_dir = TMP_DIR / submission_id
+    zip_dir.mkdir(exist_ok=True)
 
     code = request.files['src']  # get file
     code_path = zip_dir / 'src.zip'
@@ -109,7 +123,6 @@ def submit(submission_id):
         for _file in code_dir.iterdir():
             if _file.stem != 'main':
                 return 'none main', 400
-
             if _file.suffix != language_type:
                 return 'data type is not match', 400
 
@@ -138,27 +151,19 @@ def clean_data(submission_id):
 @app.route('/result/<submission_id>', methods=['POST'])
 def recieve_result(submission_id):
     post_data = request.get_json()
-
-    # convert lang to code
-    tb = ['AC', 'WA', 'CE', 'TLE', 'MLE', 'RE', 'JE', 'OLE']
-    post_data['status'] = tb.index(post_data['status'])
-    for case in post_data['cases']:
-        case['status'] = tb.index(case['status'])
+    post_data['token'] = SANDBOX_TOKEN
 
     logger.info(f'send {submission_id} to BE server')
     logger.debug(f'send json: f{post_data}')
     logger.debug(f'cookies: f{cookies[submission_id]}')
 
     resp = requests.put(
-        f'{BACKEND_API}/submission/{submission_id}?token={tokens[submission_id]}',
+        f'{BACKEND_API}/submission/{submission_id}/complete',
         json=post_data,
-        cookies=cookies[submission_id],
     )
     logger.debug(f'resp: {resp.text}')
 
     # clear
-    del tokens[submission_id]
-    del cookies[submission_id]
     if resp.status_code == 200:
         clean_data(submission_id)
 
