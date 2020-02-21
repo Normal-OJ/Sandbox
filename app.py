@@ -73,7 +73,7 @@ def submit(submission_id):
     # meta
     meta = request.files['meta.json']
     meta.save(submission_dir / 'meta.json')
-    meta = json.load(meta)
+    meta = json.load(open(submission_dir / 'meta.json'))
     # check format
     for task in meta['tasks']:
         ks = [
@@ -87,7 +87,7 @@ def submit(submission_id):
                 return 'wrong meta.json schema', 400
 
     # 0:C, 1:C++, 2:python3
-    languages = ['c', 'cpp', 'py']
+    languages = ['.c', '.cpp', '.py']
     try:
         language_id = meta['language']
         language_type = languages[language_id]
@@ -105,7 +105,7 @@ def submit(submission_id):
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
     with zipfile.ZipFile(code_path, 'r') as zf:
-        zf.extractall(code_path)
+        zf.extractall(str(code_dir))
 
     # extract testcase zip
     testcase = request.files['testcase']
