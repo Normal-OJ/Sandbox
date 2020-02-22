@@ -9,14 +9,20 @@ import requests
 import queue
 import secrets
 
-from logging.config import dictConfig
 from flask import Flask, request, jsonify
 from os import walk
 from dispatcher.dispatcher import Dispatcher
 
-logging.basicConfig(filename='sandbox.log', level=logging.DEBUG)
+logging.basicConfig(
+    filename='sandbox.log',
+    level=logging.DEBUG,
+)
 
 app = Flask(__name__)
+if __name__ != '__main__':
+    gunicorn_logger = logging.getLogger('gunicorn.error')
+    app.logger.handlers = gunicorn_logger.handlers
+    app.logger.setLevel(gunicorn_logger.level)
 logger = app.logger
 
 # setup constant
@@ -75,7 +81,12 @@ def submit(submission_id):
     meta.save(submission_dir / 'meta.json')
     meta = json.load(open(submission_dir / 'meta.json'))
     # check format
-    for task in meta['tasks']:
+    if 'tasks' not in meta:
+        return 'no task in meta', 400
+    tasks = meta['tasks']
+    if len(tasks) == 0:
+        return 'empty tasks meta', 400
+    for i, task in enumerate(tasks):
         ks = [
             'taskScore',
             'memoryLimit',
@@ -85,6 +96,8 @@ def submit(submission_id):
         for k in ks:
             if k not in task or type(task[k]) != int:
                 return 'wrong meta.json schema', 400
+        if task['caseCount'] == 0:
+            logger.warn(f'no case in task: {submission_id}/{i:02d}')
 
     # 0:C, 1:C++, 2:python3
     languages = ['.c', '.cpp', '.py']
@@ -155,7 +168,6 @@ def recieve_result(submission_id):
 
     logger.info(f'send {submission_id} to BE server')
     logger.debug(f'send json: f{post_data}')
-    logger.debug(f'cookies: f{cookies[submission_id]}')
 
     resp = requests.put(
         f'{BACKEND_API}/submission/{submission_id}/complete',
