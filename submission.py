@@ -61,7 +61,18 @@ class SubmissionRunner():
         # Status Process
         with open(self.testdata_output_path, 'r') as f:
             ans_output = f.read()
-        status = ['TLE', 'MLE', 'RE', 'OLE', 'JE']
+        status = {'TLE', 'MLE', 'RE', 'OLE', 'JE'}
         if not result['Status'] in status:
-            result['Status'] = 'AC' if result['Stdout'] == ans_output else 'WA'
+            result['Status'] = 'WA'
+            res_outs = self.strip(result['Stdout'])
+            ans_outputs = self.strip(ans_output)
+            if res_outs == ans_outputs:
+                result['Status'] = 'AC'
         return result
+
+    def strip(self, s: str) -> list:
+        ss = s.split('\n')
+        ss = [s.rstrip() for s in ss]
+        while ss[-1] == '':
+            del ss[-1]
+        return ss
