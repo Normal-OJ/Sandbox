@@ -3,10 +3,11 @@ import os
 import threading
 import time
 import requests
-import logging
 import pathlib
 import queue
+import logging
 
+from flask import current_app
 from submission import SubmissionRunner
 from .exception import *
 
@@ -52,6 +53,13 @@ class Dispatcher(threading.Thread):
             s_config = json.load(f)
             self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
 
+    @property
+    def logger(self) -> logging.Logger:
+        try:
+            return current_app.logger
+        except RuntimeError:
+            return logging.getLogger('gunicorn.error')
+
     def handle(self, submission_id):
         '''
         handle a submission, save its config and push into task queue
@@ -61,7 +69,7 @@ class Dispatcher(threading.Thread):
         Returns:
             a bool denote whether the submission has successfully put into queue
         '''
-        logging.info(f'receive submission {submission_id}.')
+        self.logger.info(f'receive submission {submission_id}.')
 
         submission_path = self.SUBMISSION_DIR / submission_id
 
@@ -93,10 +101,23 @@ class Dispatcher(threading.Thread):
 
         return True
 
+    def idle(self):
+        '''
+        for debug(?
+        '''
+        msg = 'i\'m a teapot. :/'
+        while True:
+            logging.critical('logging: ' + msg)
+            self.logger.critical('app logger: ' + msg)
+            print('print: ' + msg)
+            time.sleep(0.16)
+
     def run(self):
         self.do_run = True
+        self.logger.debug('start dispatcher loop')
         while True:
             if not self.do_run:
+                self.logger.debug('exit dispatcher loop')
                 break
             if self.queue.empty():
                 continue
@@ -107,7 +128,7 @@ class Dispatcher(threading.Thread):
             submission_id, case_no = self.queue.get()
 
             if submission_id not in self.result:
-                logging.info(f'discarded case {submission_id}/{case_no}')
+                self.logger.info(f'discarded case {submission_id}/{case_no}')
                 continue
 
             # get task info
@@ -115,14 +136,14 @@ class Dispatcher(threading.Thread):
             task_info = submission_config['tasks'][int(case_no[:2])]
 
             # read task's stdin and stdout
-            logging.info(f'create container for {submission_id}/{case_no}')
+            self.logger.info(f'create container for {submission_id}/{case_no}')
             base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
             out_path = str((base_path / f'{case_no}.out').absolute())
             base_path = self.submission_runner_cwd / submission_id / 'testcase'
             in_path = str((base_path / f'{case_no}.in').absolute())
 
-            logging.debug('in path: ' + in_path)
-            logging.debug('out path: ' + out_path)
+            self.logger.debug('in path: ' + in_path)
+            self.logger.debug('out path: ' + out_path)
 
             # assign a new runner
             threading.Thread(
@@ -170,8 +191,8 @@ class Dispatcher(threading.Thread):
         if res['Status'] != 'CE':
             res = runner.run()
 
-        logging.info(f'finish task {submission_id}/{case_no}')
-        logging.debug(f'get submission runner res: {res}')
+        self.logger.info(f'finish task {submission_id}/{case_no}')
+        self.logger.debug(f'get submission runner res: {res}')
 
         self.container_count -= 1
         self.on_case_complete(
@@ -214,7 +235,7 @@ class Dispatcher(threading.Thread):
             'status': prob_status
         }
 
-        logging.debug(f'current sub task result: {results}')
+        self.logger.debug(f'current sub task result: {results}')
         if all(results.values()):
             self.on_submission_complete(submission_id)
 
@@ -224,13 +245,16 @@ class Dispatcher(threading.Thread):
         if submission_id not in self.result:
             raise SubmissionIdNotFoundError(f'{submission_id} not found!')
         if self.testing:
+            self.logger.info(
+                'current in testing'
+                f'skip send {submission_id} result to http handler', )
             return True
 
         endpoint = f'{self.HTTP_HANDLER_URL}/result/{submission_id}'
         info, results = self.result[submission_id]
         # parse results
         submission_result = {}
-        for no, r in results:
+        for no, r in results.items():
             task_no = int(no[:2])
             case_no = int(no[2:])
             if task_no not in submission_result:
@@ -245,16 +269,16 @@ class Dispatcher(threading.Thread):
 
         submission_data = {'tasks': submission_result}
 
-        logging.debug(f'{submission_id} send to http handler ({endpoint})')
+        self.logger.debug(f'{submission_id} send to http handler ({endpoint})')
         res = requests.post(endpoint, json=submission_data)
 
-        logging.info(f'finish submission {submission_id}')
+        self.logger.info(f'finish submission {submission_id}')
 
         # remove this submission
         del self.result[submission_id]
 
         if res.status_code != 200:
-            logging.warning(
+            self.logger.warning(
                 'dispatcher receive err\n'
                 f'status code: {res.status_code}\n'
                 f'msg: {res.text}', )
