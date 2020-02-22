@@ -90,14 +90,17 @@ class Dispatcher(threading.Thread):
             submission_config = json.load(f)
 
         task_content = {}
-        for i, task in enumerate(submission_config['tasks']):
-            for j in range(task['caseCount']):
-                case_no = f'{i:02d}{j:02d}'
-                task_content[case_no] = None
-                # put (submission_id, case_no)
-                self.queue.put_nowait((submission_id, case_no))
-
         self.result[submission_id] = (submission_config, task_content)
+        try:
+            for i, task in enumerate(submission_config['tasks']):
+                for j in range(task['caseCount']):
+                    case_no = f'{i:02d}{j:02d}'
+                    task_content[case_no] = None
+                    # put (submission_id, case_no)
+                    self.queue.put_nowait((submission_id, case_no))
+        except queue.Full:
+            del self.result[submission_id]
+            raise queue.Full
 
         return True
 
