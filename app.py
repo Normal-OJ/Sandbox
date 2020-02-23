@@ -88,7 +88,7 @@ def submit(submission_id):
         return 'empty tasks meta', 400
     for i, task in enumerate(tasks):
         ks = [
-            'taskScore',
+            'caseScore',
             'memoryLimit',
             'timeLimit',
             'caseCount',
@@ -113,20 +113,16 @@ def submit(submission_id):
     zip_dir.mkdir(exist_ok=True)
 
     code = request.files['src']  # get file
-    code_path = zip_dir / 'src.zip'
-    code.save(str(code_path))  # save file
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
-    with zipfile.ZipFile(code_path, 'r') as zf:
+    with zipfile.ZipFile(code, 'r') as zf:
         zf.extractall(str(code_dir))
 
     # extract testcase zip
     testcase = request.files['testcase']
-    testcase_path = zip_dir / 'testcase.zip'
-    testcase.save(str(testcase_path))
     testcase_dir = submission_dir / 'testcase'
     testcase_dir.mkdir()
-    with zipfile.ZipFile(testcase_path, 'r') as f:
+    with zipfile.ZipFile(testcase, 'r') as f:
         f.extractall(str(testcase_dir))
 
     # check source code
