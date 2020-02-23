@@ -1,0 +1,9 @@
+{
+    "language": 2,
+    "tasks": [{
+        "taskScore": 100,
+        "memoryLimit": 1024,
+        "timeLimit": 1000,
+        "caseCount": 1
+    }]
+}

@@ -31,7 +31,7 @@ class Sandbox():
     def run(self):
         # docker container settings
         stdin_path = '/dev/null' if not self.stdin_path else '/testdata/in'
-        command_sandbox = f'sandbox {self.lang_id} {self.compile_need} {stdin_path} /result/stdout /result/stderr {self.time_limit} {self.mem_limit} 1 1048576 10 /result/result'  # 10 process 1GB output limit
+        command_sandbox = f'sandbox {self.lang_id} {self.compile_need} {stdin_path} /result/stdout /result/stderr {self.time_limit} {self.mem_limit} 1 1073741824 10 /result/result'  # 10 process 1GB output limit
         volume = {
             self.src_dir: {
                 'bind': '/src',
