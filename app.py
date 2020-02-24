@@ -88,7 +88,7 @@ def submit(submission_id):
         return 'empty tasks meta', 400
     for i, task in enumerate(tasks):
         ks = [
-            'caseScore',
+            'taskScore',
             'memoryLimit',
             'timeLimit',
             'caseCount',
