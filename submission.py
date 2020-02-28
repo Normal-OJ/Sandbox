@@ -35,7 +35,7 @@ class SubmissionRunner():
     def compile(self):
         # compile must be done in 10 seconds
         s = Sandbox(
-            time_limit=10000,  # 10s
+            time_limit=20000,  # 20s
             mem_limit=1048576,  # 1GB
             image=self.image[self.lang],
             src_dir=f'{self.working_dir}/{self.submission_id}/src',
