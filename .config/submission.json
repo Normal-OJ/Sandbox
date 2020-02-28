@@ -1,5 +1,5 @@
 {
-	"working_dir": "/home/as535364/桌面/playground/submissions",
+	"working_dir": "",
 	"docker_url": "unix://var/run/docker.sock",
 	"lang_id": {
 		"c11": 0,
