@@ -97,7 +97,7 @@ def submit(submission_id):
             if k not in task or type(task[k]) != int:
                 return 'wrong meta.json schema', 400
         if task['caseCount'] == 0:
-            logger.warn(f'no case in task: {submission_id}/{i:02d}')
+            logger.warning(f'no case in task: {submission_id}/{i:02d}')
 
     # 0:C, 1:C++, 2:python3
     languages = ['.c', '.cpp', '.py']
@@ -155,6 +155,14 @@ def submit(submission_id):
 def clean_data(submission_id):
     submission_dir = SUBMISSION_DIR / submission_id
     shutil.rmtree(submission_dir)
+
+
+@app.route('/status', methods=['GET'])
+def status():
+    ret = {
+        'load': DISPATCHER.queue.qsize() / DISPATCHER.MAX_TASK_COUNT,
+    }
+    return jsonify(ret), 200
 
 
 @app.route('/result/<submission_id>', methods=['POST'])
