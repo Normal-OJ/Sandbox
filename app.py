@@ -20,6 +20,7 @@ logging.basicConfig(
 
 app = Flask(__name__)
 if __name__ != '__main__':
+    # let flask app use gunicorn's logger
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
@@ -34,13 +35,11 @@ SUBMISSION_DIR = pathlib.Path(os.environ.get(
 ))
 TMP_DIR = pathlib.Path(os.environ.get(
     'TMP_DIR',
-    '/tmp/submissions',
+    '/tmp' / SUBMISSION_DIR,
 ))
-
 # create directory
 SUBMISSION_DIR.mkdir(exist_ok=True)
 TMP_DIR.mkdir(exist_ok=True)
-
 # setup dispatcher
 DISPATCHER_CONFIG = os.environ.get(
     'DISPATCHER_CONFIG',
@@ -48,17 +47,12 @@ DISPATCHER_CONFIG = os.environ.get(
 )
 DISPATCHER = Dispatcher(DISPATCHER_CONFIG)
 DISPATCHER.start()
-
 # backend config
-BACKEND_PORT = os.environ.get(
-    'BACKEND_PORT',
-    8080,
-)
 BACKEND_API = os.environ.get(
     'BACKEND_API',
-    f'http://web:{BACKEND_PORT}',
+    f'http://web:8080',
 )
-
+# sandbox token
 SANDBOX_TOKEN = os.getenv(
     'SANDBOX_TOKEN',
     'KoNoSandboxDa',
