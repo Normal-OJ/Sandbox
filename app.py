@@ -35,7 +35,7 @@ SUBMISSION_DIR = pathlib.Path(os.environ.get(
 ))
 TMP_DIR = pathlib.Path(os.environ.get(
     'TMP_DIR',
-    'tmp' / SUBMISSION_DIR,
+    '/tmp' / SUBMISSION_DIR,
 ))
 # create directory
 SUBMISSION_DIR.mkdir(exist_ok=True)
