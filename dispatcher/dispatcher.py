@@ -13,14 +13,18 @@ from .exception import *
 
 
 class Dispatcher(threading.Thread):
-    def __init__(self, config_path='.config/dispatcher.json'):
+    def __init__(
+        self,
+        dispatcher_config='.config/dispatcher.json',
+        submission_config='.config/submission.json',
+    ):
         super().__init__()
         self.testing = False
 
         # read config
         config = {}
-        if os.path.exists(config_path):
-            with open(config_path) as f:
+        if os.path.exists(dispatcher_config):
+            with open(dispatcher_config) as f:
                 config = json.load(f)
 
         # flag to decided whether the thread should run
@@ -49,7 +53,7 @@ class Dispatcher(threading.Thread):
         self.container_count = 0
 
         # read cwd from submission runner config
-        with open('.config/submission.json') as f:
+        with open(submission_config) as f:
             s_config = json.load(f)
             self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
 
