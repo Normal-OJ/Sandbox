@@ -50,9 +50,8 @@ def TestSubmissionRunner(tmp_path):
                 special_judge=special_judge,
                 lang=lang,
             )
-
-            self.working_dir = str(tmp_path /
-                                   pathlib.Path(self.working_dir).name)
-            print('cwd: ' + self.working_dir)
+            self.working_dir = str(
+                tmp_path /
+                pathlib.Path(self.working_dir or 'submissions').name)
 
     return TestSubmissionRunner

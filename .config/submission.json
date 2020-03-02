@@ -1,5 +1,5 @@
 {
-	"working_dir": "/tmp",
+	"working_dir": "",
 	"docker_url": "unix://var/run/docker.sock",
 	"lang_id": {
 		"c11": 0,
