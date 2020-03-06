@@ -1,3 +1,26 @@
+import pytest
+
+
+@pytest.mark.parametrize(
+    'stdout, answer, excepted',
+    [
+        # exactly the same
+        ('aaa\nbbb\n', 'aaa\nbbb\n', True),
+        # trailing space before new line
+        ('aaa  \nbbb\n', 'aaa\nbbb\n', True),
+        # redundant new line at the end
+        ('aaa\nbbb\n\n', 'aaa\nbbb\n', True),
+        # redundant new line in the middle
+        ('aaa\n\nbbb\n', 'aaa\nbbb\n', False),
+        # trailing space at the start
+        ('aaa\n bbb\b', 'aaa\nbbb\n', False),
+    ],
+)
+def test_strip_func(TestSubmissionRunner, stdout, answer, excepted):
+    assert (TestSubmissionRunner.strip(stdout) == TestSubmissionRunner.strip(
+        answer)) is excepted
+
+
 def test_c_tle(submission_generator, TestSubmissionRunner):
     submission_id = [
         _id for _id, pn in submission_generator.submission_ids.items()

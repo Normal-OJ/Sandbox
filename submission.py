@@ -70,7 +70,8 @@ class SubmissionRunner():
                 result['Status'] = 'AC'
         return result
 
-    def strip(self, s: str) -> list:
+    @classmethod
+    def strip(cls, s: str) -> list:
         # no need to process
         if len(s) == 0:
             return ''
