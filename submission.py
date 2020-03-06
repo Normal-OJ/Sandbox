@@ -71,8 +71,12 @@ class SubmissionRunner():
         return result
 
     def strip(self, s: str) -> list:
-        ss = s.split('\n')
-        ss = [s.rstrip() for s in ss]
+        # no need to process
+        if len(s) == 0:
+            return ''
+        # strip trailing space for each line
+        ss = [s.rstrip() for s in s.split('\n')]
+        # strip redundant new line
         while ss[-1] == '':
             del ss[-1]
         return ss
