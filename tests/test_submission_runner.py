@@ -14,6 +14,14 @@ import pytest
         ('aaa\n\nbbb\n', 'aaa\nbbb\n', False),
         # trailing space at the start
         ('aaa\n bbb\b', 'aaa\nbbb\n', False),
+        # empty string
+        ('', '', True),
+        # only new line
+        ('\n\n\n\n', '', True),
+        # empty character
+        ('\t\r\n', '', True),
+        # crlf
+        ('crlf\r\n', 'crlf\n', True),
     ],
 )
 def test_strip_func(TestSubmissionRunner, stdout, answer, excepted):
@@ -38,10 +46,10 @@ def test_c_tle(submission_generator, TestSubmissionRunner):
     )
 
     res = runner.compile()
-    assert res['Status'] == 'AC'
+    assert res['Status'] == 'AC', res['Stderr']
 
     res = runner.run()
-    assert res['Status'] == 'TLE'
+    assert res['Status'] == 'TLE', res
 
 
 def test_non_strict_diff(submission_generator, TestSubmissionRunner):
@@ -61,4 +69,4 @@ def test_non_strict_diff(submission_generator, TestSubmissionRunner):
     )
 
     res = runner.run()
-    assert res['Status'] == 'AC'
+    assert res['Status'] == 'AC', res
