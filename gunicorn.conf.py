@@ -7,4 +7,4 @@ accesslog = 'access.log'
 errorlog = 'error.log'
 
 worker_class = 'gthread'
-thread = 5
+threads = 5
