@@ -5,4 +5,6 @@ timeout = 60
 # loglevel = 'debug'
 accesslog = 'access.log'
 errorlog = 'error.log'
+
+worker_class = 'gthread'
 thread = 5
