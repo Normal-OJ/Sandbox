@@ -123,35 +123,36 @@ class Dispatcher(threading.Thread):
         self.do_run = True
         self.logger.debug('start dispatcher loop')
         while True:
+            # end the loop
             if not self.do_run:
                 self.logger.debug('exit dispatcher loop')
                 break
+            # no testcase need to be run
             if self.queue.empty():
                 continue
+            # no space for new cotainer now
             if self.container_count >= self.MAX_CONTAINER_SIZE:
                 continue
-
             # get a case
             submission_id, case_no = self.queue.get()
-
+            # if a submission was discarded, it will not appear in the `self.result`
             if submission_id not in self.result:
                 self.logger.info(f'discarded case {submission_id}/{case_no}')
                 continue
-
             # get task info
             submission_config = self.result[submission_id][0]
             task_info = submission_config['tasks'][int(case_no[:2])]
-
             # read task's stdin and stdout
             self.logger.info(f'create container for {submission_id}/{case_no}')
+            # output path should be the container path
             base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
             out_path = str((base_path / f'{case_no}.out').absolute())
+            # input path should be the host path
             base_path = self.submission_runner_cwd / submission_id / 'testcase'
             in_path = str((base_path / f'{case_no}.in').absolute())
-
+            # debug log
             self.logger.debug('in path: ' + in_path)
             self.logger.debug('out path: ' + out_path)
-
             # assign a new runner
             threading.Thread(
                 target=self.create_container,
