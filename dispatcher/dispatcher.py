@@ -177,7 +177,7 @@ class Dispatcher(threading.Thread):
         lang,
     ):
         self.container_count += 1
-        lang = ['c11', 'cpp11', 'python3'][lang]
+        lang = ['c11', 'cpp17', 'python3'][lang]
         runner = SubmissionRunner(
             submission_id,
             time_limit,
@@ -187,7 +187,7 @@ class Dispatcher(threading.Thread):
             lang=lang,
         )
 
-        if lang in {'c11', 'cpp11'}:
+        if lang in {'c11', 'cpp17'}:
             res = runner.compile()
         else:
             res = {'Status': 'AC'}
