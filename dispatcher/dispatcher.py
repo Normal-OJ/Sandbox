@@ -20,38 +20,33 @@ class Dispatcher(threading.Thread):
     ):
         super().__init__()
         self.testing = False
-
         # read config
         config = {}
         if os.path.exists(dispatcher_config):
             with open(dispatcher_config) as f:
                 config = json.load(f)
-
         # flag to decided whether the thread should run
         self.do_run = True
-
         # http handler URL
-        self.HTTP_HANDLER_URL = config.get('HTTP_HANDLER_URL',
-                                           'localhost:1450')
-
+        self.HTTP_HANDLER_URL = config.get(
+            'HTTP_HANDLER_URL',
+            'localhost:1450',
+        )
         # submission location
         self.SUBMISSION_DIR = pathlib.Path(
             config.get('SUBMISSION_DIR', 'submissions'))
         self.SUBMISSION_DIR.mkdir(exist_ok=True)
-
         # task queue
         # type Queue[Tuple[submission_id, task_no]]
         self.MAX_TASK_COUNT = config.get('QUEUE_SIZE', 16)
         self.queue = queue.Queue(self.MAX_TASK_COUNT)
-
         # task result
         # type: Dict[submission_id, Tuple[submission_info, List[result]]]
         self.result = {}
-
+        self.locks = {}
         # manage containers
         self.MAX_CONTAINER_SIZE = config.get('MAX_CONTAINER_NUMBER', 8)
         self.container_count = 0
-
         # read cwd from submission runner config
         with open(submission_config) as f:
             s_config = json.load(f)
@@ -95,6 +90,7 @@ class Dispatcher(threading.Thread):
 
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
+        self.locks[submission_id] = threading.Lock()
         try:
             for i, task in enumerate(submission_config['tasks']):
                 for j in range(task['caseCount']):
@@ -123,35 +119,36 @@ class Dispatcher(threading.Thread):
         self.do_run = True
         self.logger.debug('start dispatcher loop')
         while True:
+            # end the loop
             if not self.do_run:
                 self.logger.debug('exit dispatcher loop')
                 break
+            # no testcase need to be run
             if self.queue.empty():
                 continue
+            # no space for new cotainer now
             if self.container_count >= self.MAX_CONTAINER_SIZE:
                 continue
-
             # get a case
             submission_id, case_no = self.queue.get()
-
+            # if a submission was discarded, it will not appear in the `self.result`
             if submission_id not in self.result:
                 self.logger.info(f'discarded case {submission_id}/{case_no}')
                 continue
-
             # get task info
             submission_config = self.result[submission_id][0]
             task_info = submission_config['tasks'][int(case_no[:2])]
-
             # read task's stdin and stdout
             self.logger.info(f'create container for {submission_id}/{case_no}')
+            # output path should be the container path
             base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
             out_path = str((base_path / f'{case_no}.out').absolute())
+            # input path should be the host path
             base_path = self.submission_runner_cwd / submission_id / 'testcase'
             in_path = str((base_path / f'{case_no}.in').absolute())
-
+            # debug log
             self.logger.debug('in path: ' + in_path)
             self.logger.debug('out path: ' + out_path)
-
             # assign a new runner
             threading.Thread(
                 target=self.create_container,
@@ -202,16 +199,17 @@ class Dispatcher(threading.Thread):
         self.logger.debug(f'get submission runner res: {res}')
 
         self.container_count -= 1
-        self.on_case_complete(
-            submission_id=submission_id,
-            case_no=case_no,
-            stdout=res.get('Stdout', ''),
-            stderr=res.get('Stderr', ''),
-            exit_code=res.get('DockerExitCode', -1),
-            exec_time=res.get('Duration', -1),
-            mem_usage=res.get('MemUsage', -1),
-            prob_status=res['Status'],
-        )
+        with self.locks[submission_id]:
+            self.on_case_complete(
+                submission_id=submission_id,
+                case_no=case_no,
+                stdout=res.get('Stdout', ''),
+                stderr=res.get('Stderr', ''),
+                exit_code=res.get('DockerExitCode', -1),
+                exec_time=res.get('Duration', -1),
+                mem_usage=res.get('MemUsage', -1),
+                prob_status=res['Status'],
+            )
 
     def on_case_complete(
         self,

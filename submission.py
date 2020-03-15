@@ -70,9 +70,11 @@ class SubmissionRunner():
                 result['Status'] = 'AC'
         return result
 
-    def strip(self, s: str) -> list:
-        ss = s.split('\n')
-        ss = [s.rstrip() for s in ss]
-        while ss[-1] == '':
+    @classmethod
+    def strip(cls, s: str) -> list:
+        # strip trailing space for each line
+        ss = [s.rstrip() for s in s.splitlines()]
+        # strip redundant new line
+        while len(ss) and ss[-1] == '':
             del ss[-1]
         return ss
