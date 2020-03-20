@@ -149,7 +149,7 @@ class Dispatcher(threading.Thread):
             # if this submission need compile
             # and it haven't finish compiled
             if self.compile_need(lang) and \
-                self.compile_status.get(submission_id) != 'AC':
+                self.compile_status.get(submission_id) is None:
                 # no other testcase is compiling
                 if not self.compile_locks[submission_id].locked():
                     threading.Thread(
@@ -157,6 +157,7 @@ class Dispatcher(threading.Thread):
                         args=(
                             submission_id,
                             lang,
+                            case_no,
                         ),
                     ).start()
                 continue
@@ -193,20 +194,22 @@ class Dispatcher(threading.Thread):
         self,
         submission_id,
         lang,
+        case_no,
     ):
         # another thread is compileing this submission, bye
         if self.compile_locks[submission_id].locked():
-            logging.error(
+            self.logger.error(
                 f'start a compile thread on locked submission {submission_id}')
             return
         # this submission should not be compiled!
         if not self.compile_need(lang):
-            logging.warning(
+            self.logger.warning(
                 f'try to compile submission {submission_id}'
                 f' with language {lang}', )
         # compile this submission
         # don't forget to acquire the lock
         with self.compile_locks[submission_id]:
+            self.logger.info(f'start compiling {submission_id}')
             runner = SubmissionRunner(
                 submission_id=submission_id,
                 time_limit=-1,
@@ -217,9 +220,10 @@ class Dispatcher(threading.Thread):
             )
             res = runner.compile()
             self.compile_status[submission_id] = res['Status']
+            self.logger.debug(f'finish compiling, get status {res["Status"]}')
         # push this submission to task queue again
         # it just popped a few seconds before
-        self.handle(submission_id)
+        self.queue.put((submission_id, case_no))
 
     def create_container(
         self,
