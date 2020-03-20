@@ -97,6 +97,7 @@ class Dispatcher(threading.Thread):
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
         self.locks[submission_id] = threading.Lock()
+        self.compile_locks[submission_id] = threading.Lock()
         try:
             for i, task in enumerate(submission_config['tasks']):
                 for j in range(task['caseCount']):
