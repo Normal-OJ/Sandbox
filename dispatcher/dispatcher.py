@@ -160,6 +160,9 @@ class Dispatcher(threading.Thread):
                             case_no,
                         ),
                     ).start()
+                # push this submission back to task queue
+                # it just popped a few seconds before
+                self.queue.put((submission_id, case_no))
                 continue
             task_info = submission_config['tasks'][int(case_no[:2])]
             # read task's stdin and stdout
@@ -221,9 +224,6 @@ class Dispatcher(threading.Thread):
             res = runner.compile()
             self.compile_status[submission_id] = res['Status']
             self.logger.debug(f'finish compiling, get status {res["Status"]}')
-        # push this submission to task queue again
-        # it just popped a few seconds before
-        self.queue.put((submission_id, case_no))
 
     def create_container(
         self,
