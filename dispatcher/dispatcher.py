@@ -146,16 +146,19 @@ class Dispatcher(threading.Thread):
             submission_config = self.result[submission_id][0]
             # check compile
             lang = submission_config['language']
+            # if this submission need compile
+            # and it haven't finish compiled
             if self.compile_need(lang) and \
-                self.compile_status.get(submission_id) != 'AC' and \
-                not self.compile_locks[submission_id].locked():
-                threading.Thread(
-                    target=self.compile,
-                    args=(
-                        submission_id,
-                        lang,
-                    ),
-                ).start()
+                self.compile_status.get(submission_id) != 'AC':
+                # no other testcase is compiling
+                if not self.compile_locks[submission_id].locked():
+                    threading.Thread(
+                        target=self.compile,
+                        args=(
+                            submission_id,
+                            lang,
+                        ),
+                    ).start()
                 continue
             task_info = submission_config['tasks'][int(case_no[:2])]
             # read task's stdin and stdout
