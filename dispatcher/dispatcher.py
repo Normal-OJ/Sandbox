@@ -147,7 +147,7 @@ class Dispatcher(threading.Thread):
             # check compile
             lang = submission_config['language']
             if self.compile_need(lang) and \
-                self.compile_status[submission_id] != 'AC' and \
+                self.compile_status.get(submission_id) != 'AC' and \
                 not self.compile_locks[submission_id].locked():
                 threading.Thread(
                     target=self.compile,
