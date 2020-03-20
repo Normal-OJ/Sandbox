@@ -191,14 +191,18 @@ class Dispatcher(threading.Thread):
         submission_id,
         lang,
     ):
+        # another thread is compileing this submission, bye
         if self.compile_locks[submission_id].locked():
             logging.error(
                 f'start a compile thread on locked submission {submission_id}')
             return
+        # this submission should not be compiled!
         if not self.compile_need(lang):
             logging.warning(
                 f'try to compile submission {submission_id}'
                 f' with language {lang}', )
+        # compile this submission
+        # don't forget to acquire the lock
         with self.compile_locks[submission_id]:
             runner = SubmissionRunner(
                 submission_id=submission_id,
@@ -210,6 +214,9 @@ class Dispatcher(threading.Thread):
             )
             res = runner.compile()
             self.compile_status[submission_id] = res['Status']
+        # push this submission to task queue again
+        # it just popped a few seconds before
+        self.handle(submission_id)
 
     def create_container(
         self,
@@ -322,7 +329,13 @@ class Dispatcher(threading.Thread):
         self.logger.info(f'finish submission {submission_id}')
 
         # remove this submission
-        del self.result[submission_id]
+        for v in (
+                self.result,
+                self.compile_locks,
+                self.compile_status,
+                self.locks,
+        ):
+            del v[submission_id]
 
         if res.status_code != 200:
             self.logger.warning(
