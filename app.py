@@ -154,6 +154,16 @@ def status():
     ret = {
         'load': DISPATCHER.queue.qsize() / DISPATCHER.MAX_TASK_COUNT,
     }
+    # if token is provided
+    if secrets.compare_digest(SANDBOX_TOKEN, request.args.get('token', '')):
+        ret.update({
+            'queueSize': DISPATCHER.queue.qsize(),
+            'maxTaskCount': DISPATCHER.MAX_TASK_COUNT,
+            'containerCount': DISPATCHER.container_count,
+            'maxContainerCount': DISPATCHER.MAX_TASK_COUNT,
+            'submissions': [*DISPATCHER.result.keys()],
+            'running': DISPATCHER.do_run,
+        })
     return jsonify(ret), 200
 
 
