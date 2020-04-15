@@ -33,7 +33,7 @@ class SubmissionRunner():
         self.image = config['image']
 
     def compile(self):
-        # compile must be done in 10 seconds
+        # compile must be done in 20 seconds
         s = Sandbox(
             time_limit=20000,  # 20s
             mem_limit=1048576,  # 1GB

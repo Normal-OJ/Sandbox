@@ -188,6 +188,7 @@ class Dispatcher(threading.Thread):
             res = runner.compile()
         else:
             res = {'Status': 'AC'}
+        self.logger.debug(f'compile result: {res}')
         # run
         if res['Status'] != 'CE':
             res = runner.run()
@@ -196,7 +197,7 @@ class Dispatcher(threading.Thread):
         _res = res.copy()
         for k in ('Stdout', 'Stderr'):
             _res[k] = textwrap.shorten(_res.get(k, ''), 37, placeholder='...')
-        self.logger.debug(f'get submission runner res: {_res}')
+        self.logger.debug(f'runner result: {_res}')
         self.container_count -= 1
         with self.locks[submission_id]:
             self.on_case_complete(
