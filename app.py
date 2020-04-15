@@ -14,10 +14,7 @@ from flask import Flask, request, jsonify
 from os import walk
 from dispatcher.dispatcher import Dispatcher
 
-logging.basicConfig(
-    filename='sandbox.log',
-    level=logging.DEBUG,
-)
+logging.basicConfig(filename='sandbox.log')
 
 app = Flask(__name__)
 if __name__ != '__main__':
@@ -25,6 +22,7 @@ if __name__ != '__main__':
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
+    logging.getLogger().setLevel(gunicorn_logger.level)
 logger = app.logger
 
 # setup constant
