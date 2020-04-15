@@ -34,12 +34,21 @@ SUBMISSION_DIR = pathlib.Path(os.environ.get(
     'SUBMISSION_DIR',
     'submissions',
 ))
+SUBMISSION_BACKUP_DIR = pathlib.Path(
+    os.getenv(
+        'SUBMISSION_BACKUP_DIR',
+        'submissions.bk',
+    ))
 TMP_DIR = pathlib.Path(os.environ.get(
     'TMP_DIR',
     '/tmp' / SUBMISSION_DIR,
 ))
+# check
+if SUBMISSION_DIR == SUBMISSION_BACKUP_DIR:
+    logger.error('use the same dir for submission and backup!')
 # create directory
 SUBMISSION_DIR.mkdir(exist_ok=True)
+SUBMISSION_BACKUP_DIR.mkdir(exist_ok=True)
 TMP_DIR.mkdir(exist_ok=True)
 # setup dispatcher
 DISPATCHER_CONFIG = os.environ.get(
@@ -101,7 +110,7 @@ def submit(submission_id):
         return 'invalid language id', 400
     except KeyError:
         return 'no language specified', 400
-    # temp dir to store zip file
+    # temp fir to store zip file
     zip_dir = TMP_DIR / submission_id
     zip_dir.mkdir(exist_ok=True)
     # extract source code
@@ -142,17 +151,23 @@ def submit(submission_id):
     })
 
 
-def clean_data(submission_id):
-    submission_dir = SUBMISSION_DIR / submission_id
-    shutil.rmtree(submission_dir)
-
-
 @app.route('/status', methods=['GET'])
 def status():
     ret = {
         'load': DISPATCHER.queue.qsize() / DISPATCHER.MAX_TASK_COUNT,
     }
     return jsonify(ret), 200
+
+
+def clean_data(submission_id):
+    submission_dir = SUBMISSION_DIR / submission_id
+    shutil.rmtree(submission_dir)
+
+
+def backup_data(submission_id):
+    submission_dir = SUBMISSION_DIR / submission_id
+    dest = SUBMISSION_BACKUP_DIR / submission_id / f'_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
+    shutil.copytree(submission_dir, dest)
 
 
 @app.route('/result/<submission_id>', methods=['POST'])
@@ -169,4 +184,7 @@ def recieve_result(submission_id):
     # clear
     if resp.status_code == 200:
         clean_data(submission_id)
+    # copy to another place
+    else:
+        backup_data(submission_id)
     return 'data sent to BE server', 200
