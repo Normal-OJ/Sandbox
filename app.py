@@ -174,8 +174,8 @@ def clean_data(submission_id):
 
 def backup_data(submission_id):
     submission_dir = SUBMISSION_DIR / submission_id
-    dest = SUBMISSION_BACKUP_DIR / submission_id / f'_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
-    shutil.copytree(submission_dir, dest)
+    dest = SUBMISSION_BACKUP_DIR / f'{submission_id}_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
+    shutil.move(submission_dir, dest)
 
 
 @app.route('/result/<submission_id>', methods=['POST'])
