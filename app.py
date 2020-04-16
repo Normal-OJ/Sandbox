@@ -108,9 +108,6 @@ def submit(submission_id):
         return 'invalid language id', 400
     except KeyError:
         return 'no language specified', 400
-    # temp fir to store zip file
-    zip_dir = TMP_DIR / submission_id
-    zip_dir.mkdir(exist_ok=True)
     # extract source code
     code = request.files['src']
     code_dir = submission_dir / 'src'
@@ -183,12 +180,11 @@ def recieve_result(submission_id):
     post_data = request.get_json()
     post_data['token'] = SANDBOX_TOKEN
     logger.info(f'send {submission_id} to BE server')
-    logger.debug(f'send json: f{post_data}')
     resp = requests.put(
         f'{BACKEND_API}/submission/{submission_id}/complete',
         json=post_data,
     )
-    logger.debug(f'get BE response: [{resp.status_code}] {resp.text}\n', )
+    logger.debug(f'get BE response: [{resp.status_code}] {resp.text}', )
     # clear
     if resp.status_code == 200:
         clean_data(submission_id)

@@ -238,8 +238,8 @@ class Dispatcher(threading.Thread):
             'memoryUsage': mem_usage,
             'status': prob_status
         }
-        _results = {k: bool(v) for k, v in results.items()}
-        self.logger.debug(f'current sub task result: {_results}')
+        _results = [k for k, v in results.items() if not v]
+        self.logger.debug(f'tasks wait for judge: {_results}')
         if all(results.values()):
             self.on_submission_complete(submission_id)
         return True
