@@ -44,7 +44,10 @@ class Dispatcher(threading.Thread):
         # task result
         # type: Dict[submission_id, Tuple[submission_info, List[result]]]
         self.result = {}
+        # threading locks for each submission
         self.locks = {}
+        self.compile_locks = {}
+        self.compile_status = {}
         # manage containers
         self.MAX_CONTAINER_SIZE = config.get('MAX_CONTAINER_NUMBER', 8)
         self.container_count = 0
@@ -59,6 +62,9 @@ class Dispatcher(threading.Thread):
             return current_app.logger
         except RuntimeError:
             return logging.getLogger('gunicorn.error')
+
+    def compile_need(self, lang):
+        return lang in {0, 1}
 
     def handle(self, submission_id):
         '''
@@ -87,6 +93,7 @@ class Dispatcher(threading.Thread):
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
         self.locks[submission_id] = threading.Lock()
+        self.compile_locks[submission_id] = threading.Lock()
         self.logger.debug(f'current submissions: {[*self.result.keys()]}')
         try:
             for i, task in enumerate(submission_config['tasks']):
@@ -106,9 +113,9 @@ class Dispatcher(threading.Thread):
         '''
         msg = 'i\'m a teapot. :/'
         while True:
-            logging.critical('logging: ' + msg)
-            self.logger.critical('app logger: ' + msg)
-            print('print: ' + msg)
+            logging.critical(f'logging: {msg}')
+            self.logger.critical(f'app logger: {msg}')
+            print(f'print: {msg}')
             time.sleep(0.16)
 
     def run(self):
@@ -133,6 +140,26 @@ class Dispatcher(threading.Thread):
                 continue
             # get task info
             submission_config = self.result[submission_id][0]
+            # check compile
+            lang = submission_config['language']
+            # if this submission need compile
+            # and it haven't finish compiled
+            if self.compile_need(lang) and \
+                self.compile_status.get(submission_id) is None:
+                # no other testcase is compiling
+                if not self.compile_locks[submission_id].locked():
+                    threading.Thread(
+                        target=self.compile,
+                        args=(
+                            submission_id,
+                            lang,
+                            case_no,
+                        ),
+                    ).start()
+                # push this submission back to task queue
+                # it just popped a few seconds before
+                self.queue.put((submission_id, case_no))
+                continue
             task_info = submission_config['tasks'][int(case_no[:2])]
             # read task's stdin and stdout
             self.logger.info(f'create container for {submission_id}/{case_no}')
@@ -163,6 +190,38 @@ class Dispatcher(threading.Thread):
     def stop(self):
         self.do_run = False
 
+    def compile(
+        self,
+        submission_id,
+        lang,
+        case_no,
+    ):
+        # another thread is compileing this submission, bye
+        if self.compile_locks[submission_id].locked():
+            self.logger.error(
+                f'start a compile thread on locked submission {submission_id}')
+            return
+        # this submission should not be compiled!
+        if not self.compile_need(lang):
+            self.logger.warning(
+                f'try to compile submission {submission_id}'
+                f' with language {lang}', )
+        # compile this submission
+        # don't forget to acquire the lock
+        with self.compile_locks[submission_id]:
+            self.logger.info(f'start compiling {submission_id}')
+            runner = SubmissionRunner(
+                submission_id=submission_id,
+                time_limit=-1,
+                mem_limit=-1,
+                testdata_input_path='',
+                testdata_output_path='',
+                lang=['c11', 'cpp17'][lang],
+            )
+            res = runner.compile()
+            self.compile_status[submission_id] = res['Status']
+            self.logger.debug(f'finish compiling, get status {res["Status"]}')
+
     def create_container(
         self,
         submission_id,
@@ -183,15 +242,14 @@ class Dispatcher(threading.Thread):
             case_out_path,
             lang=lang,
         )
-        # compile if need
-        if lang in {'c11', 'cpp17'}:
-            res = runner.compile()
-        else:
-            res = {'Status': 'AC'}
-        self.logger.debug(f'compile result: {res}')
-        # run
+        # get compile status (if exist)
+        res = {
+            'Status': self.compile_status.get(submission_id, 'AC'),
+        }
+        # executing
         if res['Status'] != 'CE':
             res = runner.run()
+        # logging
         self.logger.info(f'finish task {submission_id}/{case_no}')
         # truncate long stdout/stderr
         _res = res.copy()
@@ -238,6 +296,7 @@ class Dispatcher(threading.Thread):
             'memoryUsage': mem_usage,
             'status': prob_status
         }
+        # check completion
         _results = [k for k, v in results.items() if not v]
         self.logger.debug(f'tasks wait for judge: {_results}')
         if all(results.values()):
@@ -274,8 +333,13 @@ class Dispatcher(threading.Thread):
         res = requests.post(endpoint, json=submission_data)
         self.logger.info(f'finish submission {submission_id}')
         # remove this submission
-        del self.result[submission_id]
-        del self.locks[submission_id]
+        for v in (
+                self.result,
+                self.compile_locks,
+                self.compile_status,
+                self.locks,
+        ):
+            del v[submission_id]
         # some error occurred
         if res.status_code != 200:
             self.logger.warning(
