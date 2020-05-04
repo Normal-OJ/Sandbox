@@ -8,15 +8,13 @@ import shutil
 import requests
 import queue
 import secrets
+from datetime import datetime
 
 from flask import Flask, request, jsonify
 from os import walk
 from dispatcher.dispatcher import Dispatcher
 
-logging.basicConfig(
-    filename='sandbox.log',
-    level=logging.DEBUG,
-)
+logging.basicConfig(filename='sandbox.log')
 
 app = Flask(__name__)
 if __name__ != '__main__':
@@ -24,6 +22,7 @@ if __name__ != '__main__':
     gunicorn_logger = logging.getLogger('gunicorn.error')
     app.logger.handlers = gunicorn_logger.handlers
     app.logger.setLevel(gunicorn_logger.level)
+    logging.getLogger().setLevel(gunicorn_logger.level)
 logger = app.logger
 
 # setup constant
@@ -33,12 +32,21 @@ SUBMISSION_DIR = pathlib.Path(os.environ.get(
     'SUBMISSION_DIR',
     'submissions',
 ))
+SUBMISSION_BACKUP_DIR = pathlib.Path(
+    os.getenv(
+        'SUBMISSION_BACKUP_DIR',
+        'submissions.bk',
+    ))
 TMP_DIR = pathlib.Path(os.environ.get(
     'TMP_DIR',
     '/tmp' / SUBMISSION_DIR,
 ))
+# check
+if SUBMISSION_DIR == SUBMISSION_BACKUP_DIR:
+    logger.error('use the same dir for submission and backup!')
 # create directory
 SUBMISSION_DIR.mkdir(exist_ok=True)
+SUBMISSION_BACKUP_DIR.mkdir(exist_ok=True)
 TMP_DIR.mkdir(exist_ok=True)
 # setup dispatcher
 DISPATCHER_CONFIG = os.environ.get(
@@ -63,17 +71,16 @@ SANDBOX_TOKEN = os.getenv(
 def submit(submission_id):
     token = request.values['token']
     if not secrets.compare_digest(token, SANDBOX_TOKEN):
+        app.logger.debug(f'get invalid token: {token}')
         return 'invalid token', 403
-
-    checker = request.values['checker']
-
+    # make submission directory
     submission_dir = SUBMISSION_DIR / submission_id
     submission_dir.mkdir()
-
-    # meta
+    # process meta
     meta = request.files['meta.json']
     meta.save(submission_dir / 'meta.json')
     meta = json.load(open(submission_dir / 'meta.json'))
+    app.logger.debug(f'{submission_id}\'s meta: {meta}')
     # check format
     if 'tasks' not in meta:
         return 'no task in meta', 400
@@ -92,7 +99,6 @@ def submit(submission_id):
                 return 'wrong meta.json schema', 400
         if task['caseCount'] == 0:
             logger.warning(f'no case in task: {submission_id}/{i:02d}')
-
     # 0:C, 1:C++, 2:python3
     languages = ['.c', '.cpp', '.py']
     try:
@@ -102,23 +108,18 @@ def submit(submission_id):
         return 'invalid language id', 400
     except KeyError:
         return 'no language specified', 400
-
-    zip_dir = TMP_DIR / submission_id
-    zip_dir.mkdir(exist_ok=True)
-
-    code = request.files['src']  # get file
+    # extract source code
+    code = request.files['src']
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
     with zipfile.ZipFile(code, 'r') as zf:
         zf.extractall(str(code_dir))
-
     # extract testcase zip
     testcase = request.files['testcase']
     testcase_dir = submission_dir / 'testcase'
     testcase_dir.mkdir()
     with zipfile.ZipFile(testcase, 'r') as f:
         f.extractall(str(testcase_dir))
-
     # check source code
     if len([*code_dir.iterdir()]) == 0:
         return 'under src does not have any file', 400
@@ -128,7 +129,6 @@ def submit(submission_id):
                 return 'none main', 400
             if _file.suffix != language_type:
                 return 'data type is not match', 400
-
     logger.debug(f'send submission {submission_id} to dispatcher')
     try:
         DISPATCHER.handle(submission_id)
@@ -146,35 +146,49 @@ def submit(submission_id):
     })
 
 
-def clean_data(submission_id):
-    submission_dir = SUBMISSION_DIR / submission_id
-    shutil.rmtree(submission_dir)
-
-
 @app.route('/status', methods=['GET'])
 def status():
     ret = {
         'load': DISPATCHER.queue.qsize() / DISPATCHER.MAX_TASK_COUNT,
     }
+    # if token is provided
+    if secrets.compare_digest(SANDBOX_TOKEN, request.args.get('token', '')):
+        ret.update({
+            'queueSize': DISPATCHER.queue.qsize(),
+            'maxTaskCount': DISPATCHER.MAX_TASK_COUNT,
+            'containerCount': DISPATCHER.container_count,
+            'maxContainerCount': DISPATCHER.MAX_TASK_COUNT,
+            'submissions': [*DISPATCHER.result.keys()],
+            'running': DISPATCHER.do_run,
+        })
     return jsonify(ret), 200
+
+
+def clean_data(submission_id):
+    submission_dir = SUBMISSION_DIR / submission_id
+    shutil.rmtree(submission_dir)
+
+
+def backup_data(submission_id):
+    submission_dir = SUBMISSION_DIR / submission_id
+    dest = SUBMISSION_BACKUP_DIR / f'{submission_id}_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
+    shutil.move(submission_dir, dest)
 
 
 @app.route('/result/<submission_id>', methods=['POST'])
 def recieve_result(submission_id):
     post_data = request.get_json()
     post_data['token'] = SANDBOX_TOKEN
-
     logger.info(f'send {submission_id} to BE server')
-    logger.debug(f'send json: f{post_data}')
-
     resp = requests.put(
         f'{BACKEND_API}/submission/{submission_id}/complete',
         json=post_data,
     )
-    logger.debug(f'resp: {resp.text}')
-
+    logger.debug(f'get BE response: [{resp.status_code}] {resp.text}', )
     # clear
     if resp.status_code == 200:
         clean_data(submission_id)
-
+    # copy to another place
+    else:
+        backup_data(submission_id)
     return 'data sent to BE server', 200

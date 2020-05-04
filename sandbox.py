@@ -72,8 +72,9 @@ class Sandbox():
         try:
             exit_status = self.client.wait(container,
                                            timeout=5 * self.time_limit)
-        except:
+        except e:
             self.client.remove_container(container, v=True, force=True)
+            logging.error(e)
             return {'Status': 'JE'}
 
         # result retrive
@@ -87,8 +88,9 @@ class Sandbox():
             stderr = self.get(container=container,
                               path='/result/',
                               filename='stderr')
-        except:
+        except e:
             self.client.remove_container(container, v=True, force=True)
+            logging.error(e)
             return {'Status': 'JE'}
 
         self.client.remove_container(container, v=True, force=True)
@@ -102,7 +104,7 @@ class Sandbox():
             'ExitMsg': result[1],
             'DockerError': exit_status['Error'],
             'DockerExitCode': exit_status['StatusCode']
-        }  # tdout:str Stderr:str Duration:int(ms) MemUsage:int(kb)
+        }  # Stdout:str Stderr:str Duration:int(ms) MemUsage:int(kb)
 
     def get(self, container, path, filename):
         bits, stat = self.client.get_archive(container, f'{path}{filename}')
