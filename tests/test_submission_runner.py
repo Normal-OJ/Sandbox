@@ -25,8 +25,8 @@ import pytest
     ],
 )
 def test_strip_func(TestSubmissionRunner, stdout, answer, excepted):
-    assert (TestSubmissionRunner.strip(stdout) == TestSubmissionRunner.strip(
-        answer)) is excepted
+    assert (TestSubmissionRunner.strip(stdout)
+            == TestSubmissionRunner.strip(answer)) is excepted
 
 
 def test_c_tle(submission_generator, TestSubmissionRunner):
