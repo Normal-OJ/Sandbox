@@ -121,7 +121,7 @@ def submit(submission_id):
     # check testcase
     testcase = request.files['testcase']
     testcase_files = [*zipfile.ZipFile(testcase).namelist()]
-    if len(testcase_files) != sum(t['caseCount'] for t in meta['tasks']):
+    if len(testcase_files) != 2 * sum(t['caseCount'] for t in meta['tasks']):
         return 'testcase count is wrong', 400
     testcase_files = {*testcase_files}
     for i, t in enumerate(meta['tasks']):
