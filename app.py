@@ -110,7 +110,7 @@ def submit(submission_id):
         return 'no language specified', 400
     # check source code
     code = request.files['src']
-    codes = code.namelist()
+    codes = zipfile.ZipFile(code).namelist()
     if len(codes) != 1 or codes[0] != f'main{language_type}':
         return 'wrong source code name', 400
     # extract source code
@@ -120,7 +120,7 @@ def submit(submission_id):
         zf.extractall(str(code_dir))
     # check testcase
     testcase = request.files['testcase']
-    testcase_files = [*testcase.namelist()]
+    testcase_files = [*zipfile.ZipFile(testcase).namelist()]
     if len(testcase_files) != sum(t['caseCount'] for t in meta['tasks']):
         return 'testcase count is wrong', 400
     testcase_files = {*testcase_files}
