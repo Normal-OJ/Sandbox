@@ -108,27 +108,32 @@ def submit(submission_id):
         return 'invalid language id', 400
     except KeyError:
         return 'no language specified', 400
-    # extract source code
+    # check source code
     code = request.files['src']
+    codes = code.namelist()
+    if len(codes) != 1 or codes[0] != f'main{language_type}':
+        return 'wrong source code name', 400
+    # extract source code
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
     with zipfile.ZipFile(code, 'r') as zf:
         zf.extractall(str(code_dir))
-    # extract testcase zip
+    # check testcase
     testcase = request.files['testcase']
+    testcase_files = [*testcase.namelist()]
+    if len(testcase_files) != sum(t['caseCount'] for t in meta['tasks']):
+        return 'testcase count is wrong', 400
+    testcase_files = {*testcase_files}
+    for i, t in enumerate(meta['tasks']):
+        for j in range(t['caseCount']):
+            for ext in ['.in', '.out']:
+                if f'{i:02d}{j:02d}{ext}' not in testcase_files:
+                    return 'missing testcase file', 400
+    # extract testcase zip
     testcase_dir = submission_dir / 'testcase'
     testcase_dir.mkdir()
     with zipfile.ZipFile(testcase, 'r') as f:
         f.extractall(str(testcase_dir))
-    # check source code
-    if len([*code_dir.iterdir()]) == 0:
-        return 'under src does not have any file', 400
-    else:
-        for _file in code_dir.iterdir():
-            if _file.stem != 'main':
-                return 'none main', 400
-            if _file.suffix != language_type:
-                return 'data type is not match', 400
     logger.debug(f'send submission {submission_id} to dispatcher')
     try:
         DISPATCHER.handle(submission_id)
