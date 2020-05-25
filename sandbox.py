@@ -71,8 +71,8 @@ class Sandbox():
 
         try:
             exit_status = self.client.wait(container,
-                                           timeout=5 * self.time_limit)
-        except e:
+                                           timeout=5 * self.time_limit // 1000)
+        except Exception as e:
             self.client.remove_container(container, v=True, force=True)
             logging.error(e)
             return {'Status': 'JE'}
@@ -88,7 +88,7 @@ class Sandbox():
             stderr = self.get(container=container,
                               path='/result/',
                               filename='stderr')
-        except e:
+        except Exception as e:
             self.client.remove_container(container, v=True, force=True)
             logging.error(e)
             return {'Status': 'JE'}
