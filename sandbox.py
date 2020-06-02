@@ -111,9 +111,11 @@ class Sandbox():
         tarbits = b''.join(chunk for chunk in bits)
         tar = tarfile.open(fileobj=BytesIO(tarbits))
         extract_path = f'/tmp/{uuid1()}'
+        #print(f"try to extract file {extract_path}")
         tar.extract(filename, extract_path)
-        with open(f'{extract_path}/{filename}', 'r') as f:
+        with open(f'{extract_path}/{filename}', 'r', errors='ignore') as f:
             contents = f.read()
+        #print(f"extract file {extract_path} success")
         os.remove(f'{extract_path}/{filename}')
         os.rmdir(extract_path)
         return contents
