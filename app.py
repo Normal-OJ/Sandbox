@@ -1,7 +1,6 @@
 import os
 import json
 import zipfile
-import glob
 import pathlib
 import logging
 import shutil
@@ -9,13 +8,10 @@ import requests
 import queue
 import secrets
 from datetime import datetime
-
 from flask import Flask, request, jsonify
-from os import walk
 from dispatcher.dispatcher import Dispatcher
 
 logging.basicConfig(filename='sandbox.log')
-
 app = Flask(__name__)
 if __name__ != '__main__':
     # let flask app use gunicorn's logger
@@ -25,10 +21,8 @@ if __name__ != '__main__':
     logging.getLogger().setLevel(gunicorn_logger.level)
 logger = app.logger
 
-# setup constant
-
 # data storage
-SUBMISSION_DIR = pathlib.Path(os.environ.get(
+SUBMISSION_DIR = pathlib.Path(os.getenv(
     'SUBMISSION_DIR',
     'submissions',
 ))
@@ -37,7 +31,7 @@ SUBMISSION_BACKUP_DIR = pathlib.Path(
         'SUBMISSION_BACKUP_DIR',
         'submissions.bk',
     ))
-TMP_DIR = pathlib.Path(os.environ.get(
+TMP_DIR = pathlib.Path(os.getenv(
     'TMP_DIR',
     '/tmp' / SUBMISSION_DIR,
 ))
@@ -49,14 +43,14 @@ SUBMISSION_DIR.mkdir(exist_ok=True)
 SUBMISSION_BACKUP_DIR.mkdir(exist_ok=True)
 TMP_DIR.mkdir(exist_ok=True)
 # setup dispatcher
-DISPATCHER_CONFIG = os.environ.get(
+DISPATCHER_CONFIG = os.getenv(
     'DISPATCHER_CONFIG',
     '.config/dispatcher.json.example',
 )
 DISPATCHER = Dispatcher(DISPATCHER_CONFIG)
 DISPATCHER.start()
 # backend config
-BACKEND_API = os.environ.get(
+BACKEND_API = os.getenv(
     'BACKEND_API',
     f'http://web:8080',
 )
@@ -88,14 +82,14 @@ def submit(submission_id):
     if len(tasks) == 0:
         return 'empty tasks meta', 400
     for i, task in enumerate(tasks):
-        ks = [
+        ks = (
             'taskScore',
             'memoryLimit',
             'timeLimit',
             'caseCount',
-        ]
+        )
         for k in ks:
-            if k not in task or type(task[k]) != int:
+            if type(task.get(k)) != int:
                 return 'wrong meta.json schema', 400
         if task['caseCount'] == 0:
             logger.warning(f'no case in task: {submission_id}/{i:02d}')
@@ -121,8 +115,8 @@ def submit(submission_id):
     with zipfile.ZipFile(testcase, 'r') as f:
         f.extractall(str(testcase_dir))
     # check source code
-    if len([*code_dir.iterdir()]) == 0:
-        return 'under src does not have any file', 400
+    if len(code_dir.iterdir()) == 0:
+        return 'no file in \'src\' directory', 400
     else:
         for _file in code_dir.iterdir():
             if _file.stem != 'main':
