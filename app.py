@@ -123,6 +123,13 @@ def submit(submission_id):
                 return 'none main', 400
             if _file.suffix != language_type:
                 return 'data type is not match', 400
+    # move chaos files to src directory
+    chaos_dir = testcase_dir / 'chaos'
+    if chaos_dir.exists():
+        if chaos_dir.is_file():
+            return '\'chaos\' can not be a file', 400
+        for chaos_file in chaos_dir.iterdir():
+            shutil.move(str(chaos_file), str(code_dir))
     logger.debug(f'send submission {submission_id} to dispatcher')
     try:
         DISPATCHER.handle(submission_id)
