@@ -115,7 +115,7 @@ def submit(submission_id):
     with zipfile.ZipFile(testcase, 'r') as f:
         f.extractall(str(testcase_dir))
     # check source code
-    if len(code_dir.iterdir()) == 0:
+    if len([*code_dir.iterdir()]) == 0:
         return 'no file in \'src\' directory', 400
     else:
         for _file in code_dir.iterdir():
