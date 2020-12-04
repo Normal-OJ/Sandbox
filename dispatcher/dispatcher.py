@@ -339,7 +339,8 @@ class Dispatcher(threading.Thread):
                 self.compile_status,
                 self.locks,
         ):
-            del v[submission_id]
+            if submission_id in v:
+                del v[submission_id]
         # some error occurred
         if res.status_code != 200:
             self.logger.warning(
