@@ -7,6 +7,7 @@ from tests.problem_parser import ProblemParser
 
 
 class SubmissionGenerator:
+
     def __init__(
         self,
         submission_path='submissions',

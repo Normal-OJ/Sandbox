@@ -1,29 +1,30 @@
 import json
+import dataclasses
+from typing import Optional
+from sandbox import Sandbox, JudgeError
 
-import docker
 
-from sandbox import Sandbox
+class SubmissionRunner:
 
-
-class SubmissionRunner():
-    def __init__(self,
-                 submission_id,
-                 time_limit,
-                 mem_limit,
-                 testdata_input_path,
-                 testdata_output_path,
-                 special_judge=False,
-                 lang=None):
+    def __init__(
+        self,
+        submission_id: str,
+        time_limit: int,  # sec.
+        mem_limit: int,  # KB
+        testdata_input_path: str,
+        testdata_output_path: str,
+        special_judge: bool = False,
+        lang: Optional[str] = None,
+    ):
         # config file
         with open('.config/submission.json') as f:
             config = json.load(f)
-        # optional
-        self.lang = lang  # str
-        self.special_judge = special_judge  # bool
+        self.lang = lang
+        self.special_judge = special_judge
         # required
-        self.submission_id = submission_id  # str
-        self.time_limit = time_limit  # int s
-        self.mem_limit = mem_limit  # int kb
+        self.submission_id = submission_id
+        self.time_limit = time_limit
+        self.mem_limit = mem_limit
         self.testdata_input_path = testdata_input_path  # absoulte path str
         self.testdata_output_path = testdata_output_path  # absoulte path str
         # working_dir
@@ -33,42 +34,47 @@ class SubmissionRunner():
         self.image = config['image']
 
     def compile(self):
-        # compile must be done in 20 seconds
-        s = Sandbox(
-            time_limit=20000,  # 20s
-            mem_limit=1048576,  # 1GB
-            image=self.image[self.lang],
-            src_dir=f'{self.working_dir}/{self.submission_id}/src',
-            lang_id=self.lang_id[self.lang],
-            compile_need=1)
-        result = s.run()
-
-        if result['Status'] == 'Exited Normally':
-            result['Status'] = 'AC'
-        elif result['Status'] != 'JE':
-            result['Status'] = 'CE'
-        return result
+        try:
+            # compile must be done in 20 seconds
+            result = Sandbox(
+                time_limit=20000,  # 20s
+                mem_limit=1048576,  # 1GB
+                image=self.image[self.lang],
+                src_dir=f'{self.working_dir}/{self.submission_id}/src',
+                lang_id=self.lang_id[self.lang],
+                compile_need=True,
+            ).run()
+        except JudgeError:
+            return {'Status': 'JE'}
+        if result.Status == 'Exited Normally':
+            result.Status = 'AC'
+        else:
+            result.Status = 'CE'
+        return dataclasses.asdict(result)
 
     def run(self):
-        s = Sandbox(time_limit=self.time_limit,
-                    mem_limit=self.mem_limit,
-                    image=self.image[self.lang],
-                    src_dir=f'{self.working_dir}/{self.submission_id}/src',
-                    lang_id=self.lang_id[self.lang],
-                    compile_need=0,
-                    stdin_path=self.testdata_input_path)
-        result = s.run()
-        # Status Process
+        try:
+            result = Sandbox(
+                time_limit=self.time_limit,
+                mem_limit=self.mem_limit,
+                image=self.image[self.lang],
+                src_dir=f'{self.working_dir}/{self.submission_id}/src',
+                lang_id=self.lang_id[self.lang],
+                compile_need=False,
+                stdin_path=self.testdata_input_path,
+            ).run()
+        except JudgeError:
+            return {'Status': 'JE'}
         with open(self.testdata_output_path, 'r') as f:
             ans_output = f.read()
-        status = {'TLE', 'MLE', 'RE', 'OLE', 'JE'}
-        if not result['Status'] in status:
-            result['Status'] = 'WA'
-            res_outs = self.strip(result['Stdout'])
+        status = {'TLE', 'MLE', 'RE', 'OLE'}
+        if result.Status not in status:
+            result.Status = 'WA'
+            res_outs = self.strip(result.Stdout)
             ans_outputs = self.strip(ans_output)
             if res_outs == ans_outputs:
-                result['Status'] = 'AC'
-        return result
+                result.Status = 'AC'
+        return dataclasses.asdict(result)
 
     @classmethod
     def strip(cls, s: str) -> list:

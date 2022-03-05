@@ -30,7 +30,9 @@ def submission_generator(tmp_path):
 
 @pytest.fixture
 def TestSubmissionRunner(tmp_path):
+
     class TestSubmissionRunner(SubmissionRunner):
+
         def __init__(
             self,
             submission_id,

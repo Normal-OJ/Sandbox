@@ -4,6 +4,7 @@ import pathlib
 
 
 class ProblemParser:
+
     def __init__(self, data_path='problem'):
         super().__init__()
 
