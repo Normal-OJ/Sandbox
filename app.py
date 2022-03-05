@@ -11,7 +11,7 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from dispatcher.dispatcher import Dispatcher
 
-logging.basicConfig(filename='sandbox.log')
+logging.basicConfig(filename='logs/sandbox.log')
 app = Flask(__name__)
 if __name__ != '__main__':
     # let flask app use gunicorn's logger
@@ -52,7 +52,7 @@ DISPATCHER.start()
 # backend config
 BACKEND_API = os.getenv(
     'BACKEND_API',
-    f'http://web:8080',
+    'http://web:8080',
 )
 # sandbox token
 SANDBOX_TOKEN = os.getenv(
