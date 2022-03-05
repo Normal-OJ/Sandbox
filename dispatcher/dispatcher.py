@@ -14,6 +14,7 @@ from .exception import *
 
 
 class Dispatcher(threading.Thread):
+
     def __init__(
         self,
         dispatcher_config='.config/dispatcher.json',
@@ -128,9 +129,11 @@ class Dispatcher(threading.Thread):
                 break
             # no testcase need to be run
             if self.queue.empty():
+                time.sleep(1)
                 continue
             # no space for new cotainer now
             if self.container_count >= self.MAX_CONTAINER_SIZE:
+                time.sleep(1)
                 continue
             # get a case
             submission_id, case_no = self.queue.get()
