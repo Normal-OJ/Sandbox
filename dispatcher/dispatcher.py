@@ -9,7 +9,7 @@ import logging
 import textwrap
 
 from flask import current_app
-from submission import SubmissionRunner
+from runner.submission import SubmissionRunner
 from .exception import *
 
 

@@ -1,7 +1,7 @@
 import json
 import dataclasses
 from typing import Optional
-from sandbox import Sandbox, JudgeError
+from runner.sandbox import Sandbox, JudgeError
 
 
 class SubmissionRunner:
