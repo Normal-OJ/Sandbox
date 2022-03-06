@@ -14,6 +14,7 @@ from . import job
 from .exception import *
 from .meta import Meta
 from .constant import Language
+from .utils import logger
 
 
 class Dispatcher(threading.Thread):
@@ -60,13 +61,6 @@ class Dispatcher(threading.Thread):
             s_config = json.load(f)
             self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
 
-    @property
-    def logger(self) -> logging.Logger:
-        try:
-            return current_app.logger
-        except RuntimeError:
-            return logging.getLogger('gunicorn.error')
-
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
 
@@ -74,7 +68,7 @@ class Dispatcher(threading.Thread):
         '''
         handle a submission, save its config and push into task queue
         '''
-        self.logger.info(f'receive submission {submission_id}.')
+        logger().info(f'receive submission {submission_id}.')
         submission_path = self.SUBMISSION_DIR / submission_id
         # check whether the submission directory exist
         if not submission_path.exists():
@@ -93,7 +87,7 @@ class Dispatcher(threading.Thread):
         self.result[submission_id] = (submission_config, task_content)
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
-        self.logger.debug(f'current submissions: {[*self.result.keys()]}')
+        logger().debug(f'current submissions: {[*self.result.keys()]}')
         try:
             if self.compile_need(submission_config.language):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
@@ -127,11 +121,11 @@ class Dispatcher(threading.Thread):
 
     def run(self):
         self.do_run = True
-        self.logger.debug('start dispatcher loop')
+        logger().debug('start dispatcher loop')
         while True:
             # end the loop
             if not self.do_run:
-                self.logger.debug('exit dispatcher loop')
+                logger().debug('exit dispatcher loop')
                 break
             # no testcase need to be run
             if self.queue.empty():
@@ -146,7 +140,7 @@ class Dispatcher(threading.Thread):
             submission_id = _job.submission_id
             # if a submission was discarded, it will not appear in the `self.result`
             if submission_id not in self.result:
-                self.logger.info(f'discarded submission [id={submission_id}]')
+                logger().info(f'discarded submission [id={submission_id}]')
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]
@@ -166,9 +160,9 @@ class Dispatcher(threading.Thread):
                 continue
             task_info = submission_config['tasks'][_job.case_id]
             case_no = f'{_job.task_id:02d}{_job.case_id:02d}'
-            self.logger.info(
+            logger().info(
                 f'create container [submission_id={submission_id}/{case_no}]')
-            self.logger.debug(f'task info: {task_info}')
+            logger().debug(f'task info: {task_info}')
             # output path should be the container path
             base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
             out_path = str((base_path / f'{case_no}.out').absolute())
@@ -176,8 +170,8 @@ class Dispatcher(threading.Thread):
             base_path = self.submission_runner_cwd / submission_id / 'testcase'
             in_path = str((base_path / f'{case_no}.in').absolute())
             # debug log
-            self.logger.debug('in path: ' + in_path)
-            self.logger.debug('out path: ' + out_path)
+            logger().debug('in path: ' + in_path)
+            logger().debug('out path: ' + out_path)
             # assign a new runner
             threading.Thread(
                 target=self.create_container,
@@ -202,18 +196,18 @@ class Dispatcher(threading.Thread):
     ):
         # another thread is compileing this submission, bye
         if self.compile_locks[submission_id].locked():
-            self.logger.error(
+            logger().error(
                 f'start a compile thread on locked submission {submission_id}')
             return
         # this submission should not be compiled!
         if not self.compile_need(lang):
-            self.logger.warning(
+            logger().warning(
                 f'try to compile submission {submission_id}'
                 f' with language {lang}', )
             return
         # compile this submission don't forget to acquire the lock
         with self.compile_locks[submission_id]:
-            self.logger.info(f'start compiling {submission_id}')
+            logger().info(f'start compiling {submission_id}')
             res = SubmissionRunner(
                 submission_id=submission_id,
                 time_limit=-1,
@@ -223,7 +217,7 @@ class Dispatcher(threading.Thread):
                 lang=['c11', 'cpp17'][int(lang)],
             ).compile()
             self.compile_status[submission_id] = res['Status']
-            self.logger.debug(f'finish compiling, get status {res["Status"]}')
+            logger().debug(f'finish compiling, get status {res["Status"]}')
 
     def create_container(
         self,
@@ -253,12 +247,12 @@ class Dispatcher(threading.Thread):
         if res['Status'] != 'CE':
             res = runner.run()
         # logging
-        self.logger.info(f'finish task {submission_id}/{case_no}')
+        logger().info(f'finish task {submission_id}/{case_no}')
         # truncate long stdout/stderr
         _res = res.copy()
         for k in ('Stdout', 'Stderr'):
             _res[k] = textwrap.shorten(_res.get(k, ''), 37, placeholder='...')
-        self.logger.debug(f'runner result: {_res}')
+        logger().debug(f'runner result: {_res}')
         self.container_count -= 1
         with self.locks[submission_id]:
             self.on_case_complete(
@@ -301,7 +295,7 @@ class Dispatcher(threading.Thread):
         }
         # check completion
         _results = [k for k, v in results.items() if not v]
-        self.logger.debug(f'tasks wait for judge: {_results}')
+        logger().debug(f'tasks wait for judge: {_results}')
         if all(results.values()):
             self.on_submission_complete(submission_id)
 
@@ -309,7 +303,7 @@ class Dispatcher(threading.Thread):
         if submission_id not in self.result:
             raise SubmissionIdNotFoundError(f'{submission_id} not found!')
         if self.testing:
-            self.logger.info(
+            logger().info(
                 'current in testing'
                 f'skip send {submission_id} result to http handler', )
             return True
@@ -331,13 +325,13 @@ class Dispatcher(threading.Thread):
         submission_result = [*submission_result.values()]
         # post data
         submission_data = {'tasks': submission_result}
-        self.logger.debug(f'{submission_id} send to http handler ({endpoint})')
+        logger().debug(f'{submission_id} send to http handler ({endpoint})')
         res = requests.post(endpoint, json=submission_data)
-        self.logger.info(f'finish submission {submission_id}')
+        logger().info(f'finish submission {submission_id}')
         self.release(submission_id)
         # some error occurred
         if res.status_code != 200:
-            self.logger.warning(
+            logger().warning(
                 'dispatcher receive err\n'
                 f'status code: {res.status_code}\n'
                 f'msg: {res.text}', )
