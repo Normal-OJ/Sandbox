@@ -10,6 +10,8 @@ import secrets
 from datetime import datetime
 from flask import Flask, request, jsonify
 from dispatcher.dispatcher import Dispatcher
+from dispatcher.meta import Meta
+from pydantic import ValidationError
 
 logging.basicConfig(filename='logs/sandbox.log')
 app = Flask(__name__)
@@ -73,47 +75,31 @@ def submit(submission_id):
     # process meta
     meta = request.files['meta.json']
     meta.save(submission_dir / 'meta.json')
-    meta = json.load(open(submission_dir / 'meta.json'))
+    try:
+        meta = Meta.parse_obj(json.load(open(submission_dir / 'meta.json')))
+    except ValidationError as e:
+        app.logger.debug(f'Invalid meta [err={e.json()}]')
+        return 'Invalid meta value', 400
     app.logger.debug(f'{submission_id}\'s meta: {meta}')
     # check format
-    if 'tasks' not in meta:
-        return 'no task in meta', 400
-    tasks = meta['tasks']
-    if len(tasks) == 0:
-        return 'empty tasks meta', 400
-    for i, task in enumerate(tasks):
-        ks = (
-            'taskScore',
-            'memoryLimit',
-            'timeLimit',
-            'caseCount',
-        )
-        for k in ks:
-            if type(task.get(k)) != int:
-                return 'wrong meta.json schema', 400
-        if task['caseCount'] == 0:
-            logger.warning(f'no case in task: {submission_id}/{i:02d}')
-    # 0:C, 1:C++, 2:python3
-    languages = ['.c', '.cpp', '.py']
-    try:
-        language_id = meta['language']
-        language_type = languages[language_id]
-    except (ValueError, IndexError):
-        return 'invalid language id', 400
-    except KeyError:
-        return 'no language specified', 400
+    for i, task in enumerate(meta.tasks):
+        if task.caseCount == 0:
+            logger.warning(f'empty task. [id={submission_id}/{i:02d}]')
+    # 0: C, 1: C++, 2: python3
+    language_id = int(meta.language)
+    language_type = ['.c', '.cpp', '.py'][language_id]
     # extract source code
     code = request.files['src']
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
-    with zipfile.ZipFile(code, 'r') as zf:
-        zf.extractall(str(code_dir))
+    with zipfile.ZipFile(code) as zf:
+        zf.extractall(code_dir)
     # extract testcase zip
     testcase = request.files['testcase']
     testcase_dir = submission_dir / 'testcase'
     testcase_dir.mkdir()
-    with zipfile.ZipFile(testcase, 'r') as f:
-        f.extractall(str(testcase_dir))
+    with zipfile.ZipFile(testcase) as f:
+        f.extractall(testcase_dir)
     # check source code
     if len([*code_dir.iterdir()]) == 0:
         return 'no file in \'src\' directory', 400
