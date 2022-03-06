@@ -30,17 +30,12 @@ SUBMISSION_BACKUP_DIR = pathlib.Path(
         'SUBMISSION_BACKUP_DIR',
         'submissions.bk',
     ))
-TMP_DIR = pathlib.Path(os.getenv(
-    'TMP_DIR',
-    '/tmp' / SUBMISSION_DIR,
-))
 # check
 if SUBMISSION_DIR == SUBMISSION_BACKUP_DIR:
     logger.error('use the same dir for submission and backup!')
 # create directory
 SUBMISSION_DIR.mkdir(exist_ok=True)
 SUBMISSION_BACKUP_DIR.mkdir(exist_ok=True)
-TMP_DIR.mkdir(exist_ok=True)
 # setup dispatcher
 DISPATCHER_CONFIG = os.getenv(
     'DISPATCHER_CONFIG',
