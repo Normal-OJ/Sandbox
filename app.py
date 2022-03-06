@@ -60,7 +60,7 @@ SANDBOX_TOKEN = os.getenv(
 )
 
 
-@app.route('/submit/<submission_id>', methods=['POST'])
+@app.post('/submit/<submission_id>')
 def submit(submission_id):
     token = request.values['token']
     if not secrets.compare_digest(token, SANDBOX_TOKEN):
@@ -93,7 +93,7 @@ def submit(submission_id):
     })
 
 
-@app.route('/status', methods=['GET'])
+@app.get('/status')
 def status():
     ret = {
         'load': DISPATCHER.queue.qsize() / DISPATCHER.MAX_TASK_COUNT,
@@ -122,7 +122,7 @@ def backup_data(submission_id):
     shutil.move(submission_dir, dest)
 
 
-@app.route('/result/<submission_id>', methods=['POST'])
+@app.post('/result/<submission_id>')
 def recieve_result(submission_id):
     post_data = request.get_json()
     post_data['token'] = SANDBOX_TOKEN
