@@ -121,7 +121,6 @@ class Dispatcher(threading.Thread):
         self.do_run = True
         logger().debug('start dispatcher loop')
         while True:
-            time.sleep(1)
             # end the loop
             if not self.do_run:
                 logger().debug('exit dispatcher loop')
