@@ -90,7 +90,6 @@ class Dispatcher(threading.Thread):
         try:
             if self.compile_need(submission_config.language):
                 self.queue.put_nowait(job.Compile(submission_id=submission_id))
-            print(submission_config)
             for i, task in enumerate(submission_config.tasks):
                 for j in range(task.caseCount):
                     case_no = f'{i:02d}{j:02d}'
@@ -156,7 +155,7 @@ class Dispatcher(threading.Thread):
                 and self.compile_status.get(submission_id) is None:
                 self.queue.put(_job)
             else:
-                task_info = submission_config.tasks[_job.case_id]
+                task_info = submission_config.tasks[_job.task_id]
                 case_no = f'{_job.task_id:02d}{_job.case_id:02d}'
                 logger().info(
                     f'create container [task={submission_id}/{case_no}]')
