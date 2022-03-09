@@ -1,11 +1,8 @@
-import json
 import os
 import shutil
 from zipfile import ZipFile
 from pathlib import Path
-
 from pydantic import ValidationError
-
 from .meta import Meta
 from .utils import logger
 
@@ -13,18 +10,13 @@ from .utils import logger
 def extract(
     root_dir: Path,
     submission_id: str,
-    meta,
+    meta: Meta,
     source,
-    testdata,
+    testdata: Path,
 ):
     submission_dir = root_dir / submission_id
     submission_dir.mkdir()
-    (submission_dir / 'meta.json').write_bytes(meta.read())
-    try:
-        meta = Meta.parse_obj(json.load(open(submission_dir / 'meta.json')))
-    except ValidationError as e:
-        logger().debug(f'Invalid meta [err={e.json()}]')
-        raise ValueError('Invalid meta value')
+    (submission_dir / 'meta.json').write_text(meta.json())
     logger().debug(f'{submission_id}\'s meta: {meta}')
     for i, task in enumerate(meta.tasks):
         if task.caseCount == 0:
@@ -46,11 +38,9 @@ def extract(
             raise ValueError('none main')
         if _file.suffix != language_type:
             raise ValueError('data type is not match')
-    # extract testcase zip
+    # Copy testdata
     testcase_dir = submission_dir / 'testcase'
-    testcase_dir.mkdir()
-    with ZipFile(testdata) as f:
-        f.extractall(testcase_dir)
+    shutil.copytree(testdata, testcase_dir)
     # move chaos files to src directory
     chaos_dir = testcase_dir / 'chaos'
     if chaos_dir.exists():

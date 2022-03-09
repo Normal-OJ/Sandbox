@@ -5,7 +5,6 @@ import time
 import requests
 import pathlib
 import queue
-import logging
 import textwrap
 
 from flask import current_app
@@ -152,39 +151,38 @@ class Dispatcher(threading.Thread):
                         submission_config.language,
                     ),
                 ).start()
-                continue
             # if this submission needs compile and it haven't finished
             elif self.compile_need(submission_config.language) \
                 and self.compile_status.get(submission_id) is None:
                 self.queue.put(_job)
-                continue
-            task_info = submission_config['tasks'][_job.case_id]
-            case_no = f'{_job.task_id:02d}{_job.case_id:02d}'
-            logger().info(
-                f'create container [submission_id={submission_id}/{case_no}]')
-            logger().debug(f'task info: {task_info}')
-            # output path should be the container path
-            base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
-            out_path = str((base_path / f'{case_no}.out').absolute())
-            # input path should be the host path
-            base_path = self.submission_runner_cwd / submission_id / 'testcase'
-            in_path = str((base_path / f'{case_no}.in').absolute())
-            # debug log
-            logger().debug('in path: ' + in_path)
-            logger().debug('out path: ' + out_path)
-            # assign a new runner
-            threading.Thread(
-                target=self.create_container,
-                args=(
-                    submission_id,
-                    case_no,
-                    task_info.memoryLimit,
-                    task_info.timeLimit,
-                    in_path,
-                    out_path,
-                    submission_config.language,
-                ),
-            ).start()
+            else:
+                task_info = submission_config.tasks[_job.case_id]
+                case_no = f'{_job.task_id:02d}{_job.case_id:02d}'
+                logger().info(
+                    f'create container [task={submission_id}/{case_no}]')
+                logger().debug(f'task info: {task_info}')
+                # output path should be the container path
+                base_path = self.SUBMISSION_DIR / submission_id / 'testcase'
+                out_path = str((base_path / f'{case_no}.out').absolute())
+                # input path should be the host path
+                base_path = self.submission_runner_cwd / submission_id / 'testcase'
+                in_path = str((base_path / f'{case_no}.in').absolute())
+                # debug log
+                logger().debug('in path: ' + in_path)
+                logger().debug('out path: ' + out_path)
+                # assign a new runner
+                threading.Thread(
+                    target=self.create_container,
+                    args=(
+                        submission_id,
+                        case_no,
+                        task_info.memoryLimit,
+                        task_info.timeLimit,
+                        in_path,
+                        out_path,
+                        submission_config.language,
+                    ),
+                ).start()
 
     def stop(self):
         self.do_run = False

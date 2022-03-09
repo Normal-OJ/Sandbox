@@ -8,7 +8,17 @@ import secrets
 from datetime import datetime
 from flask import Flask, request, jsonify
 from dispatcher import file_manager
+from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
+from dispatcher.testdata import (
+    ensure_testdata,
+    get_problem_meta,
+    get_problem_root,
+)
+from dispatcher.config import (
+    BACKEND_API,
+    SANDBOX_TOKEN,
+)
 
 logging.basicConfig(filename='logs/sandbox.log')
 app = Flask(__name__)
@@ -43,31 +53,25 @@ DISPATCHER_CONFIG = os.getenv(
 )
 DISPATCHER = Dispatcher(DISPATCHER_CONFIG)
 DISPATCHER.start()
-# backend config
-BACKEND_API = os.getenv(
-    'BACKEND_API',
-    'http://web:8080',
-)
-# sandbox token
-SANDBOX_TOKEN = os.getenv(
-    'SANDBOX_TOKEN',
-    'KoNoSandboxDa',
-)
 
 
 @app.post('/submit/<submission_id>')
-def submit(submission_id):
+def submit(submission_id: str):
     token = request.values['token']
     if not secrets.compare_digest(token, SANDBOX_TOKEN):
         logger.debug(f'get invalid token: {token}')
         return 'invalid token', 403
+    # Ensure the testdata is up to data
+    problem_id = request.form.get('problem_id', type=int)
+    ensure_testdata(problem_id)
+    language = Language(request.form.get('language', type=int))
     try:
         file_manager.extract(
             root_dir=SUBMISSION_DIR,
             submission_id=submission_id,
-            meta=request.files['meta.json'],
+            meta=get_problem_meta(problem_id, language),
             source=request.files['src'],
-            testdata=request.files['testcase'],
+            testdata=get_problem_root(problem_id),
         )
     except ValueError as e:
         return str(e), 400
