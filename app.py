@@ -1,7 +1,4 @@
 import os
-import json
-import zipfile
-import glob
 import pathlib
 import logging
 import shutil
@@ -9,13 +6,21 @@ import requests
 import queue
 import secrets
 from datetime import datetime
-
 from flask import Flask, request, jsonify
-from os import walk
+from dispatcher import file_manager
+from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
+from dispatcher.testdata import (
+    ensure_testdata,
+    get_problem_meta,
+    get_problem_root,
+)
+from dispatcher.config import (
+    BACKEND_API,
+    SANDBOX_TOKEN,
+)
 
-logging.basicConfig(filename='sandbox.log')
-
+logging.basicConfig(filename='logs/sandbox.log')
 app = Flask(__name__)
 if __name__ != '__main__':
     # let flask app use gunicorn's logger
@@ -25,10 +30,8 @@ if __name__ != '__main__':
     logging.getLogger().setLevel(gunicorn_logger.level)
 logger = app.logger
 
-# setup constant
-
 # data storage
-SUBMISSION_DIR = pathlib.Path(os.environ.get(
+SUBMISSION_DIR = pathlib.Path(os.getenv(
     'SUBMISSION_DIR',
     'submissions',
 ))
@@ -37,98 +40,41 @@ SUBMISSION_BACKUP_DIR = pathlib.Path(
         'SUBMISSION_BACKUP_DIR',
         'submissions.bk',
     ))
-TMP_DIR = pathlib.Path(os.environ.get(
-    'TMP_DIR',
-    '/tmp' / SUBMISSION_DIR,
-))
 # check
 if SUBMISSION_DIR == SUBMISSION_BACKUP_DIR:
     logger.error('use the same dir for submission and backup!')
 # create directory
 SUBMISSION_DIR.mkdir(exist_ok=True)
 SUBMISSION_BACKUP_DIR.mkdir(exist_ok=True)
-TMP_DIR.mkdir(exist_ok=True)
 # setup dispatcher
-DISPATCHER_CONFIG = os.environ.get(
+DISPATCHER_CONFIG = os.getenv(
     'DISPATCHER_CONFIG',
     '.config/dispatcher.json.example',
 )
 DISPATCHER = Dispatcher(DISPATCHER_CONFIG)
 DISPATCHER.start()
-# backend config
-BACKEND_API = os.environ.get(
-    'BACKEND_API',
-    f'http://web:8080',
-)
-# sandbox token
-SANDBOX_TOKEN = os.getenv(
-    'SANDBOX_TOKEN',
-    'KoNoSandboxDa',
-)
 
 
-@app.route('/submit/<submission_id>', methods=['POST'])
-def submit(submission_id):
+@app.post('/submit/<submission_id>')
+def submit(submission_id: str):
     token = request.values['token']
     if not secrets.compare_digest(token, SANDBOX_TOKEN):
-        app.logger.debug(f'get invalid token: {token}')
+        logger.debug(f'get invalid token: {token}')
         return 'invalid token', 403
-    # make submission directory
-    submission_dir = SUBMISSION_DIR / submission_id
-    submission_dir.mkdir()
-    # process meta
-    meta = request.files['meta.json']
-    meta.save(submission_dir / 'meta.json')
-    meta = json.load(open(submission_dir / 'meta.json'))
-    app.logger.debug(f'{submission_id}\'s meta: {meta}')
-    # check format
-    if 'tasks' not in meta:
-        return 'no task in meta', 400
-    tasks = meta['tasks']
-    if len(tasks) == 0:
-        return 'empty tasks meta', 400
-    for i, task in enumerate(tasks):
-        ks = [
-            'taskScore',
-            'memoryLimit',
-            'timeLimit',
-            'caseCount',
-        ]
-        for k in ks:
-            if k not in task or type(task[k]) != int:
-                return 'wrong meta.json schema', 400
-        if task['caseCount'] == 0:
-            logger.warning(f'no case in task: {submission_id}/{i:02d}')
-    # 0:C, 1:C++, 2:python3
-    languages = ['.c', '.cpp', '.py']
+    # Ensure the testdata is up to data
+    problem_id = request.form.get('problem_id', type=int)
+    ensure_testdata(problem_id)
+    language = Language(request.form.get('language', type=int))
     try:
-        language_id = meta['language']
-        language_type = languages[language_id]
-    except (ValueError, IndexError):
-        return 'invalid language id', 400
-    except KeyError:
-        return 'no language specified', 400
-    # extract source code
-    code = request.files['src']
-    code_dir = submission_dir / 'src'
-    code_dir.mkdir()
-    with zipfile.ZipFile(code, 'r') as zf:
-        zf.extractall(str(code_dir))
-    # extract testcase zip
-    testcase = request.files['testcase']
-    testcase_dir = submission_dir / 'testcase'
-    testcase_dir.mkdir()
-    with zipfile.ZipFile(testcase, 'r') as f:
-        f.extractall(str(testcase_dir))
-    # check source code
-    if len([*code_dir.iterdir()]) == 0:
-        return 'under src does not have any file', 400
-    else:
-        for _file in code_dir.iterdir():
-            if _file.stem != 'main':
-                return 'none main', 400
-            if _file.suffix != language_type:
-                return 'data type is not match', 400
+        file_manager.extract(
+            root_dir=SUBMISSION_DIR,
+            submission_id=submission_id,
+            meta=get_problem_meta(problem_id, language),
+            source=request.files['src'],
+            testdata=get_problem_root(problem_id),
+        )
+    except ValueError as e:
+        return str(e), 400
     logger.debug(f'send submission {submission_id} to dispatcher')
     try:
         DISPATCHER.handle(submission_id)
@@ -146,7 +92,7 @@ def submit(submission_id):
     })
 
 
-@app.route('/status', methods=['GET'])
+@app.get('/status')
 def status():
     ret = {
         'load': DISPATCHER.queue.qsize() / DISPATCHER.MAX_TASK_COUNT,
@@ -175,7 +121,7 @@ def backup_data(submission_id):
     shutil.move(submission_dir, dest)
 
 
-@app.route('/result/<submission_id>', methods=['POST'])
+@app.post('/result/<submission_id>')
 def recieve_result(submission_id):
     post_data = request.get_json()
     post_data['token'] = SANDBOX_TOKEN

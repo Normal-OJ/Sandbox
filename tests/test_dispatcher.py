@@ -25,7 +25,7 @@ def test_normal_submission(
     assert len(_ids) != 0
 
     for _id, prob in _ids:
-        assert docker_dispatcher.handle(_id) is True
+        docker_dispatcher.handle(_id)
 
 
 def test_duplicated_submission(
@@ -41,7 +41,7 @@ def test_duplicated_submission(
     assert _id is not None
     assert prob is not None
 
-    assert docker_dispatcher.handle(_id) is True
+    docker_dispatcher.handle(_id)
 
     try:
         docker_dispatcher.handle(_id)

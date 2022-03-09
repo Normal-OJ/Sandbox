@@ -1,3 +1,4 @@
+import json
 import pytest
 
 
@@ -46,10 +47,9 @@ def test_c_tle(submission_generator, TestSubmissionRunner):
     )
 
     res = runner.compile()
-    assert res['Status'] == 'AC', res['Stderr']
-
+    assert res['Status'] == 'AC', json.dumps(res)
     res = runner.run()
-    assert res['Status'] == 'TLE', res
+    assert res['Status'] == 'TLE', json.dumps(res)
 
 
 def test_non_strict_diff(submission_generator, TestSubmissionRunner):

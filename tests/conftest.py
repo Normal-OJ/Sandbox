@@ -1,7 +1,7 @@
 import pytest
 import pathlib
 from dispatcher.dispatcher import Dispatcher
-from submission import SubmissionRunner
+from runner.submission import SubmissionRunner
 from tests.submission_generator import SubmissionGenerator
 
 TEST_CONFIG_PATH = '.config/dispatcher.test.json'
@@ -30,7 +30,9 @@ def submission_generator(tmp_path):
 
 @pytest.fixture
 def TestSubmissionRunner(tmp_path):
+
     class TestSubmissionRunner(SubmissionRunner):
+
         def __init__(
             self,
             submission_id,
