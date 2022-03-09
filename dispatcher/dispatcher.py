@@ -2,18 +2,15 @@ import json
 import os
 import threading
 import time
-import requests
 import pathlib
 import queue
 import textwrap
-
-from flask import current_app
 from runner.submission import SubmissionRunner
 from . import job
 from .exception import *
 from .meta import Meta
 from .constant import Language
-from .utils import logger
+from .utils import (get_redis_client, logger)
 
 
 class Dispatcher(threading.Thread):
@@ -32,14 +29,12 @@ class Dispatcher(threading.Thread):
                 config = json.load(f)
         # flag to decided whether the thread should run
         self.do_run = True
-        # http handler URL
-        self.HTTP_HANDLER_URL = config.get(
-            'HTTP_HANDLER_URL',
-            'localhost:1450',
-        )
         # submission location
         self.SUBMISSION_DIR = pathlib.Path(
-            config.get('SUBMISSION_DIR', 'submissions'))
+            config.get(
+                'SUBMISSION_DIR',
+                'submissions',
+            ))
         self.SUBMISSION_DIR.mkdir(exist_ok=True)
         # task queue
         # type Queue[Tuple[submission_id, task_no]]
@@ -296,7 +291,7 @@ class Dispatcher(threading.Thread):
         if all(results.values()):
             self.on_submission_complete(submission_id)
 
-    def on_submission_complete(self, submission_id):
+    def on_submission_complete(self, submission_id: str):
         if submission_id not in self.result:
             raise SubmissionIdNotFoundError(f'{submission_id} not found!')
         if self.testing:
@@ -304,7 +299,6 @@ class Dispatcher(threading.Thread):
                 'current in testing'
                 f'skip send {submission_id} result to http handler', )
             return True
-        endpoint = f'{self.HTTP_HANDLER_URL}/result/{submission_id}'
         _, results = self.result[submission_id]
         # parse results
         submission_result = {}
@@ -322,15 +316,8 @@ class Dispatcher(threading.Thread):
         submission_result = [*submission_result.values()]
         # post data
         submission_data = {'tasks': submission_result}
-        logger().debug(f'{submission_id} send to http handler ({endpoint})')
-        res = requests.post(endpoint, json=submission_data)
-        logger().info(f'finish submission {submission_id}')
-        self.release(submission_id)
-        # some error occurred
-        if res.status_code != 200:
-            logger().warning(
-                'dispatcher receive err\n'
-                f'status code: {res.status_code}\n'
-                f'msg: {res.text}', )
-            return False
-        return True
+        json.dump(
+            submission_data,
+            (self.SUBMISSION_DIR / submission_id / 'result.json').open('w'),
+        )
+        get_redis_client().publish('submission-completed', submission_id)
