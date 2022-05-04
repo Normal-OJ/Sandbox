@@ -64,6 +64,7 @@ def get_problem_root(problem_id: int) -> Path:
     return TESTDATA_ROOT / str(problem_id)
 
 
+# TODO: Delete unused testdata
 def fetch_testdata(problem_id: int):
     '''
     Fetch testdata from backend server

@@ -1,12 +1,16 @@
 import json
+import logging
 import os
 import threading
 import time
 import pathlib
 import queue
 import textwrap
+from typing import Any, Dict
+import rq
 from runner.submission import SubmissionRunner
 from . import job
+from .result_sender import send_submission_result
 from .exception import *
 from .meta import Meta
 from .constant import Language
@@ -161,9 +165,6 @@ class Dispatcher(threading.Thread):
                 # input path should be the host path
                 base_path = self.submission_runner_cwd / submission_id / 'testcase'
                 in_path = str((base_path / f'{case_no}.in').absolute())
-                # debug log
-                logger().debug('in path: ' + in_path)
-                logger().debug('out path: ' + out_path)
                 # assign a new runner
                 threading.Thread(
                     target=self.create_container,
@@ -209,7 +210,10 @@ class Dispatcher(threading.Thread):
                 lang=['c11', 'cpp17'][int(lang)],
             ).compile()
             self.compile_status[submission_id] = res['Status']
-            logger().debug(f'finish compiling, get status {res["Status"]}')
+            if res['Status'] == 'CE':
+                self.log_runner_result(submission_id, 'COMPILE', res)
+            else:
+                logger().debug(f'Finish compiling. [stateu={res["Status"]}]')
 
     def create_container(
         self,
@@ -238,13 +242,8 @@ class Dispatcher(threading.Thread):
         # executing
         if res['Status'] != 'CE':
             res = runner.run()
-        # logging
         logger().info(f'finish task {submission_id}/{case_no}')
-        # truncate long stdout/stderr
-        _res = res.copy()
-        for k in ('Stdout', 'Stderr'):
-            _res[k] = textwrap.shorten(_res.get(k, ''), 37, placeholder='...')
-        logger().debug(f'runner result: {_res}')
+        self.log_runner_result(submission_id, case_no, res)
         self.container_count -= 1
         with self.locks[submission_id]:
             self.on_case_complete(
@@ -257,6 +256,31 @@ class Dispatcher(threading.Thread):
                 mem_usage=res.get('MemUsage', -1),
                 prob_status=res['Status'],
             )
+
+    def log_runner_result(
+        self,
+        submission_id: str,
+        case_no: str,
+        res: Dict[str, Any],
+    ):
+        '''
+        log stdout/stderr for debugging
+        '''
+        if not logger().isEnabledFor(logging.DEBUG):
+            return
+        _res = res.copy()
+        for k in ('Stdout', 'Stderr'):
+            # truncate long stdout/stderr
+            truncated = textwrap.shorten(
+                _res.get(k, ''),
+                256,
+                placeholder='...',
+            )
+            _res[k] = truncated
+        msg = (f'Runner result [res={_res}, '
+               f'submission_id={submission_id}, '
+               f'case_no={case_no}]')
+        logger().debug(msg)
 
     def on_case_complete(
         self,
@@ -320,4 +344,6 @@ class Dispatcher(threading.Thread):
             submission_data,
             (self.SUBMISSION_DIR / submission_id / 'result.json').open('w'),
         )
-        get_redis_client().publish('submission-completed', submission_id)
+        q = rq.Queue(name='send', connection=get_redis_client())
+        q.enqueue(send_submission_result, submission_id)
+        self.release(submission_id)

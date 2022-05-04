@@ -2,12 +2,10 @@ import os
 import logging
 import queue
 import secrets
-import threading
 from flask import Flask, request, jsonify
 from dispatcher import file_manager
 from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
-from dispatcher.result_sender import send_submission_result
 from dispatcher.testdata import (
     ensure_testdata,
     get_problem_meta,
@@ -24,7 +22,6 @@ DISPATCHER_CONFIG = os.getenv(
 )
 DISPATCHER = Dispatcher(DISPATCHER_CONFIG)
 DISPATCHER.start()
-threading.Thread(target=send_submission_result).start()
 
 
 def create_app():

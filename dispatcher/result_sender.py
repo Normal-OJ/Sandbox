@@ -1,12 +1,8 @@
 import json
 import shutil
 from datetime import datetime
-from typing import Any, Dict
 import requests as rq
-from .utils import (
-    get_redis_client,
-    logger,
-)
+from .utils import logger
 from .config import (
     BACKEND_API,
     SANDBOX_TOKEN,
@@ -26,8 +22,10 @@ def backup_data(submission_id):
     shutil.move(submission_dir, dest)
 
 
-def on_submission_complete(message: Dict[str, Any]):
-    submission_id: str = message['data'].decode()
+def send_submission_result(submission_id: str):
+    '''
+    Send submission result to backend server
+    '''
     logger().info(f'submission completed [id={submission_id}]')
     result = (SUBMISSION_DIR / submission_id / 'result.json')
     if not result.exists():
@@ -47,17 +45,3 @@ def on_submission_complete(message: Dict[str, Any]):
         clean_data(submission_id)
     else:
         backup_data(submission_id)
-
-
-def send_submission_result():
-    client = get_redis_client()
-    p = client.pubsub(ignore_subscribe_messages=True)
-    p.subscribe(
-        'stop',
-        **{'submission-completed': on_submission_complete},
-    )
-
-    logger().info(f'start waiting to send submission result')
-    for msg in p.listen():
-        if msg['channel'] == b'stop':
-            break

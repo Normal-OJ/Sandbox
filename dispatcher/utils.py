@@ -33,5 +33,6 @@ def get_redis_client():
     # Create connection pool
     global redis_pool
     if redis_pool is None:
+        logger().debug(f'Try connecting redis [url={REDIS_URL}]')
         redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
     return redis.Redis(connection_pool=redis_pool)
