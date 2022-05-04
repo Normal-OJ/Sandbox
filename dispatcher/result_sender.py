@@ -1,14 +1,18 @@
 import json
+import logging
 import shutil
 from datetime import datetime
 import requests as rq
-from .utils import logger
 from .config import (
     BACKEND_API,
     SANDBOX_TOKEN,
     SUBMISSION_DIR,
     SUBMISSION_BACKUP_DIR,
 )
+
+# FIXME: confused with dispatcher.utils.logger
+def logger() -> logging.Logger:
+    return logging.getLogger('rq.worker')
 
 
 def clean_data(submission_id):
