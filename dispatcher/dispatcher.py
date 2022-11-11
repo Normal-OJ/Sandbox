@@ -54,6 +54,7 @@ class Dispatcher(threading.Thread):
         self.compile_status = {}
         # manage containers
         self.MAX_CONTAINER_SIZE = config.get('MAX_CONTAINER_NUMBER', 8)
+        self.container_count_lock = threading.Lock()
         self.container_count = 0
         # read cwd from submission runner config
         with open(submission_config) as f:
@@ -62,6 +63,14 @@ class Dispatcher(threading.Thread):
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
+
+    def inc_container(self):
+        with self.container_count_lock:
+            self.container_count += 1
+
+    def dec_container(self):
+        with self.container_count_lock:
+            self.container_count -= 1
 
     def handle(self, submission_id: str):
         '''
@@ -202,7 +211,7 @@ class Dispatcher(threading.Thread):
                 f'try to compile submission {submission_id}'
                 f' with language {lang}', )
             return
-        # compile this submission don't forget to acquire the lock
+        # compile this submission. don't forget to acquire the lock
         with self.compile_locks[submission_id]:
             logger().info(f'start compiling {submission_id}')
             res = SubmissionRunner(
@@ -226,7 +235,6 @@ class Dispatcher(threading.Thread):
         case_out_path: str,
         lang: Language,
     ):
-        self.container_count += 1
         lang = ['c11', 'cpp17', 'python3'][int(lang)]
         runner = SubmissionRunner(
             submission_id,
@@ -237,12 +245,18 @@ class Dispatcher(threading.Thread):
             lang=lang,
         )
         # get compile status (if exist)
-        res = {
-            'Status': self.compile_status.get(submission_id, 'AC'),
-        }
+        try:
+            status = self.compile_status[submission_id]
+        except KeyError:
+            status = 'CE' if self.compile_need(lang) else 'AC'
+        res = {'Status': status}
         # executing
         if res['Status'] != 'CE':
-            res = runner.run()
+            try:
+                self.inc_container()
+                res = runner.run()
+            finally:
+                self.dec_container()
         # logging
         logger().info(f'finish task {submission_id}/{case_no}')
         # truncate long stdout/stderr
@@ -250,7 +264,6 @@ class Dispatcher(threading.Thread):
         for k in ('Stdout', 'Stderr'):
             _res[k] = textwrap.shorten(_res.get(k, ''), 37, placeholder='...')
         logger().debug(f'runner result: {_res}')
-        self.container_count -= 1
         with self.locks[submission_id]:
             self.on_case_complete(
                 submission_id=submission_id,
