@@ -6,10 +6,11 @@ import requests
 import pathlib
 import queue
 import textwrap
+import shutil
+from datetime import datetime
 
-from flask import current_app
 from runner.submission import SubmissionRunner
-from . import job
+from . import job, file_manager
 from .exception import *
 from .meta import Meta
 from .constant import Language
@@ -60,9 +61,14 @@ class Dispatcher(threading.Thread):
         with open(submission_config) as f:
             s_config = json.load(f)
             self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
+        self.timeout = 300
+        self.created_at = {}
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
+
+    def contains(self, submission_id: str):
+        return submission_id in self.result
 
     def inc_container(self):
         with self.container_count_lock:
@@ -71,6 +77,38 @@ class Dispatcher(threading.Thread):
     def dec_container(self):
         with self.container_count_lock:
             self.container_count -= 1
+
+    def is_timed_out(self, submission_id: str):
+        if not self.contains(submission_id):
+            return False
+        delta = (datetime.now() - self.created_at[submission_id]).seconds
+        return delta > self.timeout
+
+    def prepare_submission_dir(
+        self,
+        root_dir: pathlib.Path,
+        submission_id: str,
+        meta: Meta,
+        source,
+        testdata: pathlib.Path,
+    ):
+        create = lambda: file_manager.extract(
+            root_dir=root_dir,
+            submission_id=submission_id,
+            meta=meta,
+            source=source,
+            testdata=testdata,
+        )
+        try:
+            create()
+        except FileExistsError:
+            # time out, retry
+            if self.is_timed_out(submission_id):
+                self.release(submission_id)
+                shutil.rmtree(root_dir / submission_id)
+                create()
+            else:
+                raise
 
     def handle(self, submission_id: str):
         '''
@@ -85,7 +123,7 @@ class Dispatcher(threading.Thread):
         elif not submission_path.is_dir():
             raise NotADirectoryError(f'{submission_path} is not a directory')
         # duplicated
-        if submission_id in self.result:
+        if self.contains(submission_id):
             raise DuplicatedSubmissionIdError(
                 f'duplicated submission id {submission_id}.')
         # read submission meta
@@ -122,6 +160,7 @@ class Dispatcher(threading.Thread):
                 self.compile_locks,
                 self.compile_status,
                 self.locks,
+                self.created_at,
         ):
             if submission_id in v:
                 del v[submission_id]
@@ -146,8 +185,11 @@ class Dispatcher(threading.Thread):
             _job = self.queue.get()
             submission_id = _job.submission_id
             # if a submission was discarded, it will not appear in the `self.result`
-            if submission_id not in self.result:
+            if not self.contains(submission_id):
                 logger().info(f'discarded submission [id={submission_id}]')
+                continue
+            if self.is_timed_out(submission_id):
+                logger().info(f'submission timed out [id={submission_id}]')
                 continue
             # get task info
             submission_config, _ = self.result[submission_id]

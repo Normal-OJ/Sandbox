@@ -66,7 +66,7 @@ def submit(submission_id: str):
     ensure_testdata(problem_id)
     language = Language(request.form.get('language', type=int))
     try:
-        file_manager.extract(
+        DISPATCHER.prepare_submission_dir(
             root_dir=SUBMISSION_DIR,
             submission_id=submission_id,
             meta=get_problem_meta(problem_id, language),
