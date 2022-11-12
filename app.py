@@ -1,13 +1,8 @@
 import os
-import pathlib
 import logging
-import shutil
-import requests
 import queue
 import secrets
-from datetime import datetime
 from flask import Flask, request, jsonify
-from dispatcher import file_manager
 from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
 from dispatcher.testdata import (
@@ -15,10 +10,7 @@ from dispatcher.testdata import (
     get_problem_meta,
     get_problem_root,
 )
-from dispatcher.config import (
-    BACKEND_API,
-    SANDBOX_TOKEN,
-)
+from dispatcher.config import (SANDBOX_TOKEN, SUBMISSION_DIR)
 
 logging.basicConfig(filename='logs/sandbox.log')
 app = Flask(__name__)
@@ -30,22 +22,6 @@ if __name__ != '__main__':
     logging.getLogger().setLevel(gunicorn_logger.level)
 logger = app.logger
 
-# data storage
-SUBMISSION_DIR = pathlib.Path(os.getenv(
-    'SUBMISSION_DIR',
-    'submissions',
-))
-SUBMISSION_BACKUP_DIR = pathlib.Path(
-    os.getenv(
-        'SUBMISSION_BACKUP_DIR',
-        'submissions.bk',
-    ))
-# check
-if SUBMISSION_DIR == SUBMISSION_BACKUP_DIR:
-    logger.error('use the same dir for submission and backup!')
-# create directory
-SUBMISSION_DIR.mkdir(exist_ok=True)
-SUBMISSION_BACKUP_DIR.mkdir(exist_ok=True)
 # setup dispatcher
 DISPATCHER_CONFIG = os.getenv(
     'DISPATCHER_CONFIG',
@@ -108,33 +84,3 @@ def status():
             'running': DISPATCHER.do_run,
         })
     return jsonify(ret), 200
-
-
-def clean_data(submission_id):
-    submission_dir = SUBMISSION_DIR / submission_id
-    shutil.rmtree(submission_dir)
-
-
-def backup_data(submission_id):
-    submission_dir = SUBMISSION_DIR / submission_id
-    dest = SUBMISSION_BACKUP_DIR / f'{submission_id}_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
-    shutil.move(submission_dir, dest)
-
-
-@app.post('/result/<submission_id>')
-def recieve_result(submission_id):
-    post_data = request.get_json()
-    post_data['token'] = SANDBOX_TOKEN
-    logger.info(f'send {submission_id} to BE server')
-    resp = requests.put(
-        f'{BACKEND_API}/submission/{submission_id}/complete',
-        json=post_data,
-    )
-    logger.debug(f'get BE response: [{resp.status_code}] {resp.text}', )
-    # clear
-    if resp.status_code == 200:
-        clean_data(submission_id)
-    # copy to another place
-    else:
-        backup_data(submission_id)
-    return 'data sent to BE server', 200

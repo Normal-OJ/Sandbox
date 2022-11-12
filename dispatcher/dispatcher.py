@@ -10,7 +10,7 @@ import shutil
 from datetime import datetime
 
 from runner.submission import SubmissionRunner
-from . import job, file_manager
+from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
 from .constant import Language
@@ -33,11 +33,6 @@ class Dispatcher(threading.Thread):
                 config = json.load(f)
         # flag to decided whether the thread should run
         self.do_run = True
-        # http handler URL
-        self.HTTP_HANDLER_URL = config.get(
-            'HTTP_HANDLER_URL',
-            'localhost:1450',
-        )
         # submission location
         self.SUBMISSION_DIR = pathlib.Path(
             config.get('SUBMISSION_DIR', 'submissions'))
@@ -351,15 +346,14 @@ class Dispatcher(threading.Thread):
         if all(results.values()):
             self.on_submission_complete(submission_id)
 
-    def on_submission_complete(self, submission_id):
-        if submission_id not in self.result:
+    def on_submission_complete(self, submission_id: str):
+        if not self.contains(submission_id):
             raise SubmissionIdNotFoundError(f'{submission_id} not found!')
         if self.testing:
             logger().info(
-                'current in testing'
-                f'skip send {submission_id} result to http handler', )
+                f'skip submission post processing in testing [submission_id={submission_id}]'
+            )
             return True
-        endpoint = f'{self.HTTP_HANDLER_URL}/result/{submission_id}'
         _, results = self.result[submission_id]
         # parse results
         submission_result = {}
@@ -376,16 +370,20 @@ class Dispatcher(threading.Thread):
         assert [*submission_result.keys()] == [*range(len(submission_result))]
         submission_result = [*submission_result.values()]
         # post data
-        submission_data = {'tasks': submission_result}
-        logger().debug(f'{submission_id} send to http handler ({endpoint})')
-        res = requests.post(endpoint, json=submission_data)
-        logger().info(f'finish submission {submission_id}')
+        submission_data = {
+            'tasks': submission_result,
+            'token': config.SANDBOX_TOKEN
+        }
         self.release(submission_id)
-        # some error occurred
-        if res.status_code != 200:
-            logger().warning(
-                'dispatcher receive err\n'
-                f'status code: {res.status_code}\n'
-                f'msg: {res.text}', )
-            return False
-        return True
+        logger().info(f'send to BE [submission_id={submission_id}]')
+        resp = requests.put(
+            f'{config.BACKEND_API}/submission/{submission_id}/complete',
+            json=submission_data,
+        )
+        logger().debug(f'get BE response: [{resp.status_code}] {resp.text}', )
+        # clear
+        if resp.ok:
+            file_manager.clean_data(submission_id)
+        # copy to another place
+        else:
+            file_manager.backup_data(submission_id)
