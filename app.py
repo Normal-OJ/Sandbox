@@ -33,12 +33,14 @@ DISPATCHER.start()
 
 @app.post('/submit/<submission_id>')
 def submit(submission_id: str):
-    token = request.values['token']
+    token = request.values.get('token', '')
     if not secrets.compare_digest(token, SANDBOX_TOKEN):
         logger.debug(f'get invalid token: {token}')
         return 'invalid token', 403
     # Ensure the testdata is up to data
     problem_id = request.form.get('problem_id', type=int)
+    if problem_id is None:
+        return 'missing problen id', 400
     ensure_testdata(problem_id)
     language = Language(request.form.get('language', type=int))
     try:
