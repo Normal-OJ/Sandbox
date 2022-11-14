@@ -1,8 +1,9 @@
 import os
 import shutil
+from datetime import datetime
 from zipfile import ZipFile
 from pathlib import Path
-from pydantic import ValidationError
+from . import config
 from .meta import Meta
 from .utils import logger
 
@@ -22,10 +23,9 @@ def extract(
         if task.caseCount == 0:
             logger().warning(f'empty task. [id={submission_id}/{i:02d}]')
     # extract source code
-    code = source
     code_dir = submission_dir / 'src'
     code_dir.mkdir()
-    with ZipFile(code) as zf:
+    with ZipFile(source) as zf:
         zf.extractall(code_dir)
     # check
     files = [*code_dir.iterdir()]
@@ -38,7 +38,7 @@ def extract(
             raise ValueError('none main')
         if _file.suffix != language_type:
             raise ValueError('data type is not match')
-    # Copy testdata
+    # copy testdata
     testcase_dir = submission_dir / 'testcase'
     shutil.copytree(testdata, testcase_dir)
     # move chaos files to src directory
@@ -49,3 +49,14 @@ def extract(
         for chaos_file in chaos_dir.iterdir():
             shutil.move(str(chaos_file), str(code_dir))
         os.rmdir(chaos_dir)
+
+
+def clean_data(submission_id):
+    submission_dir = config.SUBMISSION_DIR / submission_id
+    shutil.rmtree(submission_dir)
+
+
+def backup_data(submission_id):
+    submission_dir = config.SUBMISSION_DIR / submission_id
+    dest = config.SUBMISSION_BACKUP_DIR / f'{submission_id}_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
+    shutil.move(submission_dir, dest)
