@@ -39,6 +39,7 @@ def handle_problem_response(resp: rq.Response):
 
 # TODO: Schema validation
 def fetch_problem_meta(problem_id: int) -> str:
+    logger().debug(f'fetch problem meta [problem_id={problem_id}]')
     resp = rq.get(
         f'{BACKEND_API}/problem/{problem_id}/meta',
         params={
@@ -68,6 +69,7 @@ def fetch_testdata(problem_id: int):
     '''
     Fetch testdata from backend server
     '''
+    logger().debug(f'fetch problem testdata [problem_id={problem_id}]')
     resp = rq.get(
         f'{BACKEND_API}/problem/{problem_id}/testdata',
         params={
@@ -95,19 +97,24 @@ def ensure_testdata(problem_id: int):
     '''
     client = get_redis_client()
     key = f'problem-{problem_id}-checksum'
-    curr_checksum = client.get(key)
-    if curr_checksum is not None:
-        curr_checksum = curr_checksum.decode()
-        checksum = get_checksum(problem_id)
-        # No need to update
-        if secrets.compare_digest(curr_checksum, checksum):
-            return
-    testdata = fetch_testdata(problem_id)
-    problem_root = TESTDATA_ROOT / str(problem_id)
-    if problem_root.exists():
-        shutil.rmtree(problem_root)
-    with ZipFile(io.BytesIO(testdata)) as zf:
-        zf.extractall(problem_root)
-    meta = fetch_problem_meta(problem_id)
-    checksum = calc_checksum(testdata + meta.encode())
-    client.setex(key, 600, checksum)
+    lock_key = f'{key}-lock'
+    with client.lock(lock_key, timeout=15):
+        curr_checksum = client.get(key)
+        if curr_checksum is not None:
+            curr_checksum = curr_checksum.decode()
+            checksum = get_checksum(problem_id)
+            if secrets.compare_digest(curr_checksum, checksum):
+                logger().debug(
+                    f'problem testdata is up to date [problem_id={problem_id}]'
+                )
+                return
+        logger().info(f'refresh problem testdata [problem_id={problem_id}]')
+        testdata = fetch_testdata(problem_id)
+        problem_root = get_problem_root(problem_id)
+        if problem_root.exists():
+            shutil.rmtree(problem_root)
+        with ZipFile(io.BytesIO(testdata)) as zf:
+            zf.extractall(problem_root)
+        meta = fetch_problem_meta(problem_id)
+        checksum = calc_checksum(testdata + meta.encode())
+        client.setex(key, 600, checksum)
