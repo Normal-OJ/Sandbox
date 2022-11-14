@@ -95,8 +95,9 @@ class Dispatcher(threading.Thread):
         try:
             create()
         except FileExistsError:
-            # time out, retry
-            if self.is_timed_out(submission_id):
+            # no found or time out, retry
+            if not self.contains(submission_id) or self.is_timed_out(
+                    submission_id):
                 self.release(submission_id)
                 shutil.rmtree(root_dir / submission_id)
                 create()
@@ -122,10 +123,14 @@ class Dispatcher(threading.Thread):
         # read submission meta
         with (submission_path / 'meta.json').open() as f:
             submission_config = Meta.parse_obj(json.load(f))
+
+        # assign submission context
         task_content = {}
         self.result[submission_id] = (submission_config, task_content)
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
+        self.created_at[submission_id] = datetime.now()
+
         logger().debug(f'current submissions: {[*self.result.keys()]}')
         try:
             if self.compile_need(submission_config.language):
