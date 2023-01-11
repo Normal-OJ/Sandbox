@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 # sandbox binary
 rm -f sandbox
 wget https://github.com/Normal-OJ/C-Sandbox/releases/latest/download/sandbox
