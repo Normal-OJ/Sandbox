@@ -8,6 +8,7 @@ import queue
 import textwrap
 import shutil
 from datetime import datetime
+from typing import Dict, Tuple, Any, Optional
 
 from runner.submission import SubmissionRunner
 from . import job, file_manager, config
@@ -41,7 +42,9 @@ class Dispatcher(threading.Thread):
         self.queue = queue.Queue(self.MAX_TASK_COUNT)
         # task result
         # type: Dict[submission_id, Tuple[submission_info, List[result]]]
-        self.result = {}
+        self.result: Dict[str, Tuple[Meta, Dict[str,
+                                                Optional[Dict[str,
+                                                              Any]]]]] = {}
         # threading locks for each submission
         self.locks = {}
         self.compile_locks = {}

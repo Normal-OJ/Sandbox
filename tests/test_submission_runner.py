@@ -1,5 +1,6 @@
 import json
 import pytest
+from .submission_generator import SubmissionGenerator
 
 
 @pytest.mark.parametrize(
@@ -25,16 +26,21 @@ import pytest
         ('crlf\r\n', 'crlf\n', True),
     ],
 )
-def test_strip_func(TestSubmissionRunner, stdout, answer, excepted):
-    assert (TestSubmissionRunner.strip(stdout)
-            == TestSubmissionRunner.strip(answer)) is excepted
+def test_strip_func(
+    TestSubmissionRunner,
+    stdout: str,
+    answer: str,
+    excepted: bool,
+):
+    assert (TestSubmissionRunner.strip(stdout) == TestSubmissionRunner.strip(
+        answer)) == excepted
 
 
-def test_c_tle(submission_generator, TestSubmissionRunner):
-    submission_id = [
-        _id for _id, pn in submission_generator.submission_ids.items()
-        if pn == 'c-TLE'
-    ][0]
+def test_c_tle(
+    submission_generator: SubmissionGenerator,
+    TestSubmissionRunner,
+):
+    submission_id = submission_generator.gen_submission('c-TLE')
     submission_path = submission_generator.get_submission_path(submission_id)
 
     runner = TestSubmissionRunner(
@@ -52,11 +58,11 @@ def test_c_tle(submission_generator, TestSubmissionRunner):
     assert res['Status'] == 'TLE', json.dumps(res)
 
 
-def test_non_strict_diff(submission_generator, TestSubmissionRunner):
-    submission_id = [
-        _id for _id, pn in submission_generator.submission_ids.items()
-        if pn == 'space-before-lf'
-    ][0]
+def test_non_strict_diff(
+    submission_generator: SubmissionGenerator,
+    TestSubmissionRunner,
+):
+    submission_id = submission_generator.gen_submission('space-before-lf')
     submission_path = submission_generator.get_submission_path(submission_id)
 
     runner = TestSubmissionRunner(
@@ -65,6 +71,27 @@ def test_non_strict_diff(submission_generator, TestSubmissionRunner):
         mem_limit=32768,
         testdata_input_path=submission_path + '/testcase/0000.in',
         testdata_output_path=submission_path + '/testcase/0000.out',
+        lang='python3',
+    )
+
+    res = runner.run()
+    assert res['Status'] == 'AC', res
+
+
+def test_context_io_should_be_accepted(
+    submission_generator: SubmissionGenerator,
+    TestSubmissionRunner,
+):
+    submission_id = submission_generator.gen_submission('context-io')
+    submission_path = submission_generator.get_submission_path(submission_id)
+
+    runner = TestSubmissionRunner(
+        submission_id=submission_id,
+        time_limit=1000,
+        mem_limit=32768,
+        testdata_input_path=submission_path + '/testcase/test-case/0000/STDIN',
+        testdata_output_path=submission_path +
+        '/testcase/test-case/0000/STDOUT',
         lang='python3',
     )
 

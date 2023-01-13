@@ -7,7 +7,7 @@ if __name__ == '__main__':
         print(f'Usage: python {__file__} <problem_name>')
         exit(0)
     problem_name = sys.argv[1]
-    problem_root = Path('problem')
+    problem_root = Path('tests/problem')
     problem_dir = problem_root / problem_name
     problem_dir.mkdir()
     (problem_dir / 'src').mkdir()

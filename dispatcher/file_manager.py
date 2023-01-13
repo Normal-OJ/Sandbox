@@ -1,5 +1,6 @@
 import os
 import shutil
+from typing import BinaryIO
 from datetime import datetime
 from zipfile import ZipFile
 from pathlib import Path
@@ -12,7 +13,7 @@ def extract(
     root_dir: Path,
     submission_id: str,
     meta: Meta,
-    source,
+    source: BinaryIO,
     testdata: Path,
 ):
     submission_dir = root_dir / submission_id

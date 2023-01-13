@@ -20,8 +20,7 @@ def docker_dispatcher(tmp_path):
 
 @pytest.fixture
 def submission_generator(tmp_path):
-    generator = SubmissionGenerator(submission_path=tmp_path / 'submissions')
-    generator.gen_all()
+    generator = SubmissionGenerator(submission_dir=tmp_path / 'submissions')
 
     yield generator
 
