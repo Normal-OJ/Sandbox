@@ -45,7 +45,7 @@ class Dispatcher(threading.Thread):
         # threading locks for each submission
         self.locks = {}
         self.compile_locks = {}
-        self.compile_status = {}
+        self.compile_results = {}
         # manage containers
         self.MAX_CONTAINER_SIZE = d_config.get('MAX_CONTAINER_NUMBER', 8)
         self.container_count_lock = threading.Lock()
@@ -156,7 +156,7 @@ class Dispatcher(threading.Thread):
         for v in (
                 self.result,
                 self.compile_locks,
-                self.compile_status,
+                self.compile_results,
                 self.locks,
                 self.created_at,
         ):
@@ -201,7 +201,7 @@ class Dispatcher(threading.Thread):
                 ).start()
             # if this submission needs compile and it haven't finished
             elif self.compile_need(submission_config.language) \
-                and self.compile_status.get(submission_id) is None:
+                and self.compile_results.get(submission_id) is None:
                 self.queue.put(_job)
             else:
                 task_info = submission_config.tasks[_job.task_id]
@@ -240,7 +240,7 @@ class Dispatcher(threading.Thread):
         submission_id: str,
         lang: Language,
     ):
-        # another thread is compileing this submission, bye
+        # another thread is compiling this submission, bye
         if self.compile_locks[submission_id].locked():
             logger().error(
                 f'start a compile thread on locked submission {submission_id}')
@@ -262,7 +262,7 @@ class Dispatcher(threading.Thread):
                 testdata_output_path='',
                 lang=['c11', 'cpp17'][int(lang)],
             ).compile()
-            self.compile_status[submission_id] = res['Status']
+            self.compile_results[submission_id] = res
             logger().debug(f'finish compiling, get status {res["Status"]}')
 
     def create_container(
@@ -284,20 +284,14 @@ class Dispatcher(threading.Thread):
             case_out_path,
             lang=lang,
         )
-        # get compile status (if exist)
-        try:
-            status = self.compile_status[submission_id]
-        except KeyError:
-            status = 'CE' if self.compile_need(lang) else 'AC'
-        res = {'Status': status}
-        # executing
+        res = self.extract_compile_result(submission_id, lang)
+        # Execute if compile successfully
         if res['Status'] != 'CE':
             try:
                 self.inc_container()
                 res = runner.run()
             finally:
                 self.dec_container()
-        # logging
         logger().info(f'finish task {submission_id}/{case_no}')
         # truncate long stdout/stderr
         _res = res.copy()
@@ -315,6 +309,17 @@ class Dispatcher(threading.Thread):
                 mem_usage=res.get('MemUsage', -1),
                 prob_status=res['Status'],
             )
+
+    def extract_compile_result(self, submission_id: str, lang: Language):
+        '''
+        Get compile result for specific submission. If the language does
+        not need to be compiled, return a AC result.
+        '''
+        try:
+            return self.compile_results[submission_id]
+        except KeyError:
+            status = 'CE' if self.compile_need(lang) else 'AC'
+            return {'Status': status}
 
     def on_case_complete(
         self,
