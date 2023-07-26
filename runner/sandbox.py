@@ -143,7 +143,7 @@ class Sandbox:
             Stdout=stdout,
             Stderr=stderr,
             ExitMsg=result[1],
-            DockerError=exit_status['Error'],
+            DockerError=exit_status.get('Error', ''),
             DockerExitCode=exit_status['StatusCode'],
         )
 
