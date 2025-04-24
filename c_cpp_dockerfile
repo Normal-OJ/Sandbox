@@ -2,7 +2,7 @@
 
 FROM ubuntu:18.04
 
-LABEL maintainer="Normal-OJ"
+LABEL org.opencontainers.image.authors="Normal-OJ Maintainers <admin@noj.tw>"
 
 # update
 RUN apt-get update -y
