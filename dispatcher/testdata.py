@@ -98,7 +98,7 @@ def ensure_testdata(problem_id: int):
     client = get_redis_client()
     key = f'problem-{problem_id}-checksum'
     lock_key = f'{key}-lock'
-    with client.lock(lock_key, timeout=15):
+    with client.lock(lock_key, timeout=60):
         curr_checksum = client.get(key)
         if curr_checksum is not None:
             curr_checksum = curr_checksum.decode()

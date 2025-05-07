@@ -1,6 +1,6 @@
 # for c_cpp
 
-FROM ubuntu:18.04
+FROM ubuntu:20.04
 
 LABEL org.opencontainers.image.authors="Normal-OJ Maintainers <admin@noj.tw>"
 
@@ -8,10 +8,10 @@ LABEL org.opencontainers.image.authors="Normal-OJ Maintainers <admin@noj.tw>"
 RUN apt-get update -y
 
 # install seccomp
-RUN apt-get install seccomp -y
+RUN apt-get install libseccomp-dev -y
 
 # install g++
-RUN apt-get install g++ -y
+RUN apt-get install g++ gcc -y
 
 # sandbox user with uid:1450
 RUN useradd sandbox -u 1450
