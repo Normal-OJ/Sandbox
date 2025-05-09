@@ -1,6 +1,6 @@
 # for python3
 
-FROM ubuntu:18.04
+FROM ubuntu:22.04
 
 LABEL org.opencontainers.image.authors="Normal-OJ Maintainers <admin@noj.tw>"
 
