@@ -13,7 +13,7 @@ SANDBOX_TOKEN = os.getenv(
 )
 TESTDATA_ROOT = Path(os.getenv(
     'TESTDATA_ROOT',
-    '/sandbox-testdata',
+    'sandbox-testdata',
 ))
 TESTDATA_ROOT.mkdir(exist_ok=True)
 SUBMISSION_DIR = Path(os.getenv(
