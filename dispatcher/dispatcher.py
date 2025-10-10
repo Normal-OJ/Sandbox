@@ -5,7 +5,6 @@ import time
 import requests
 import pathlib
 import queue
-import textwrap
 import shutil
 from datetime import datetime
 
@@ -293,11 +292,6 @@ class Dispatcher(threading.Thread):
             finally:
                 self.dec_container()
         logger().info(f'finish task {submission_id}/{case_no}')
-        # truncate long stdout/stderr
-        _res = res.copy()
-        for k in ('Stdout', 'Stderr'):
-            _res[k] = textwrap.shorten(_res.get(k, ''), 37, placeholder='...')
-        logger().debug(f'runner result: {_res}')
         with self.locks[submission_id]:
             self.on_case_complete(
                 submission_id=submission_id,
