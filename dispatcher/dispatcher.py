@@ -5,8 +5,8 @@ import time
 import requests
 import pathlib
 import queue
-import textwrap
 import shutil
+import tempfile
 from datetime import datetime
 
 from runner.submission import SubmissionRunner
@@ -293,11 +293,6 @@ class Dispatcher(threading.Thread):
             finally:
                 self.dec_container()
         logger().info(f'finish task {submission_id}/{case_no}')
-        # truncate long stdout/stderr
-        _res = res.copy()
-        for k in ('Stdout', 'Stderr'):
-            _res[k] = textwrap.shorten(_res.get(k, ''), 37, placeholder='...')
-        logger().debug(f'runner result: {_res}')
         with self.locks[submission_id]:
             self.on_case_complete(
                 submission_id=submission_id,
@@ -378,16 +373,26 @@ class Dispatcher(threading.Thread):
         assert [*submission_result.keys()] == [*range(len(submission_result))]
         submission_result = [*submission_result.values()]
         # post data
-        submission_data = {
-            'tasks': submission_result,
-            'token': config.SANDBOX_TOKEN
-        }
-        self.release(submission_id)
-        logger().info(f'send to BE [submission_id={submission_id}]')
-        resp = requests.put(
-            f'{config.BACKEND_API}/submission/{submission_id}/complete',
-            json=submission_data,
-        )
+        with tempfile.NamedTemporaryFile("w") as tmpf:
+            submission_data = {
+                'tasks': submission_result,
+                'token': config.SANDBOX_TOKEN
+            }
+            # write payload to file
+            json.dump(submission_data, tmpf)
+            tmpf.flush()
+            # release resources
+            del submission_data
+            self.release(submission_id)
+
+            logger().info(f'send to BE [submission_id={submission_id}]')
+            # open in binary mode as requests needs a binary stream
+            with open(tmpf.name, "rb") as payload:
+                resp = requests.put(
+                    f'{config.BACKEND_API}/submission/{submission_id}/complete',
+                    data=payload,
+                    headers={'Content-Type': 'application/json'},
+                )
         logger().debug(f'get BE response: [{resp.status_code}] {resp.text}', )
         # clear
         if resp.ok:

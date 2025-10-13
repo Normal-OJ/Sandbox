@@ -3,8 +3,8 @@ import logging
 import tarfile
 import tempfile
 from dataclasses import dataclass
-from io import BytesIO
 from typing import Optional
+from pathlib import Path
 import docker
 
 
@@ -115,21 +115,11 @@ class Sandbox:
             raise JudgeError
         # retrive result
         try:
-            result = self.get(
-                container=container,
-                path='/result/',
-                filename='result',
-            ).split('\n')
-            stdout = self.get(
-                container=container,
-                path='/result/',
-                filename='stdout',
+            result, stdout, stderr = self.get_result(
+                container,
+                ['result', 'stdout', 'stderr'],
             )
-            stderr = self.get(
-                container=container,
-                path='/result/',
-                filename='stderr',
-            )
+            result = result.split('\n')
         except Exception as e:
             self.client.remove_container(container, v=True, force=True)
             logging.error(e)
@@ -147,16 +137,21 @@ class Sandbox:
             DockerExitCode=exit_status['StatusCode'],
         )
 
-    def get(self, container, path, filename):
-        bits, _ = self.client.get_archive(container, f'{path}{filename}')
-        tarbits = b''.join(bits)
-        tar = tarfile.open(fileobj=BytesIO(tarbits))
-        with tempfile.TemporaryDirectory() as extract_path:
-            tar.extract(filename, extract_path)
-            with open(
-                    f'{extract_path}/{filename}',
+    def get_result(self, container, filenames: list[str]) -> list[str]:
+        result_dir = '/result'
+        bits, _ = self.client.get_archive(container, result_dir)
+        with (tempfile.NamedTemporaryFile() as
+              tarball, tempfile.TemporaryDirectory() as extract_path):
+            for chunk in bits:
+                tarball.write(chunk)
+            tarball.flush()
+            tarball.seek(0)
+            with tarfile.open(fileobj=tarball) as tar:
+                tar.extractall(extract_path)
+            return [
+                open(
+                    Path(extract_path) / result_dir.lstrip('/') / filename,
                     'r',
                     errors='ignore',
-            ) as f:
-                contents = f.read()
-        return contents
+                ).read() for filename in filenames
+            ]
