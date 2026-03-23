@@ -1,5 +1,19 @@
 import json
 import pytest
+import docker
+
+
+def _docker_available():
+    try:
+        client = docker.APIClient()
+        client.ping()
+        return True
+    except Exception:
+        return False
+
+
+needs_docker = pytest.mark.skipif(not _docker_available(),
+                                  reason='Docker is not available')
 
 
 @pytest.mark.parametrize(
@@ -30,6 +44,7 @@ def test_strip_func(TestSubmissionRunner, stdout, answer, excepted):
         answer)) is excepted
 
 
+@needs_docker
 def test_c_tle(submission_generator, TestSubmissionRunner):
     submission_id = [
         _id for _id, pn in submission_generator.submission_ids.items()
@@ -52,6 +67,7 @@ def test_c_tle(submission_generator, TestSubmissionRunner):
     assert res['Status'] == 'TLE', json.dumps(res)
 
 
+@needs_docker
 def test_non_strict_diff(submission_generator, TestSubmissionRunner):
     submission_id = [
         _id for _id, pn in submission_generator.submission_ids.items()
