@@ -2,6 +2,7 @@ import io
 import json
 import pathlib
 import threading
+import time
 from unittest.mock import MagicMock, patch, PropertyMock
 from zipfile import ZipFile
 
@@ -194,57 +195,56 @@ class TestRunLoop:
 
     def test_skips_poll_when_no_slots(self, runner):
         """When all slots are occupied, runner should not poll."""
-        runner.running_jobs = runner.__class__.__init__  # just reset
-        runner = Runner()
         with runner.running_lock:
             runner.running_jobs = 4  # MAX_CONCURRENT
 
-        call_count = 0
-        original_poll = runner.poll_for_jobs
+        poll_called = False
 
         def counting_poll():
-            nonlocal call_count
-            call_count += 1
-            runner.shutdown = True
+            nonlocal poll_called
+            poll_called = True
             return []
 
         runner.poll_for_jobs = counting_poll
 
-        # Run in a thread with a timeout so it doesn't hang
-        t = threading.Thread(target=runner.run)
-        t.start()
-        t.join(timeout=5)
+        # On first sleep (slots full), set shutdown and reset running_jobs
+        # so the drain loop also exits immediately.
+        def mock_sleep(_):
+            runner.shutdown = True
+            with runner.running_lock:
+                runner.running_jobs = 0
+
+        with patch.object(runner_client.time, 'sleep', side_effect=mock_sleep):
+            runner.run()
+
         # poll should not have been called since slots were full
-        # (the loop sleeps then re-checks; shutdown gets set on first poll if it happens)
-        # Either 0 calls (skipped) or 1 call (raced) is acceptable
-        assert call_count <= 1
+        assert not poll_called
 
     def test_claims_and_processes_jobs(self, runner):
         """Runner should claim available jobs and spawn processing threads."""
         jobs = [{'submissionId': 'sub1'}]
         job_info = JobInfo('sub1', 1, 0, 'tok', {})
 
-        runner.poll_for_jobs = MagicMock(side_effect=[jobs, []])
+        call_count = 0
+
+        def poll_then_shutdown():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return jobs
+            runner.shutdown = True
+            return []
+
+        runner.poll_for_jobs = poll_then_shutdown
         runner.claim_job = MagicMock(return_value=job_info)
-        runner.process_job = MagicMock()
+        # Mock process_job to also decrement running_jobs (like the real finally block)
+        def mock_process(job):
+            with runner.running_lock:
+                runner.running_jobs -= 1
 
-        poll_count = 0
-        original_poll = runner.poll_for_jobs
+        runner.process_job = MagicMock(side_effect=mock_process)
 
-        def poll_then_shutdown(*args, **kwargs):
-            nonlocal poll_count
-            result = original_poll(*args, **kwargs)
-            poll_count += 1
-            if poll_count >= 2:
-                runner.shutdown = True
-            return result
-
-        runner.poll_for_jobs = MagicMock(side_effect=poll_then_shutdown)
-        runner.claim_job = MagicMock(return_value=job_info)
-        runner.process_job = MagicMock(side_effect=lambda j: None)
-
-        # Patch time.sleep to speed up
-        with patch('time.sleep', return_value=None):
+        with patch.object(runner_client.time, 'sleep', return_value=None):
             runner.run()
 
         runner.claim_job.assert_called_with('sub1')
