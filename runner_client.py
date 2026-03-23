@@ -47,7 +47,8 @@ logger = logging.getLogger('runner')
 
 # Configuration from environment
 BACKEND_API = os.getenv('BACKEND_API', 'http://web:8080')
-RUNNER_TOKEN = os.getenv('RUNNER_TOKEN', os.getenv('SANDBOX_TOKEN', 'KoNoSandboxDa'))
+RUNNER_TOKEN = os.getenv('RUNNER_TOKEN',
+                         os.getenv('SANDBOX_TOKEN', 'KoNoSandboxDa'))
 RUNNER_NAME = os.getenv('RUNNER_NAME', os.uname().nodename)
 POLL_INTERVAL = int(os.getenv('POLL_INTERVAL', '5'))
 MAX_CONCURRENT = int(os.getenv('MAX_CONCURRENT', '4'))
@@ -90,7 +91,8 @@ class Runner:
                 timeout=30,
             )
             if not resp.ok:
-                logger.warning(f'Failed to poll for jobs: {resp.status_code} {resp.text}')
+                logger.warning(
+                    f'Failed to poll for jobs: {resp.status_code} {resp.text}')
                 return []
             data = resp.json().get('data', {})
             return data.get('jobs', [])
@@ -109,7 +111,8 @@ class Runner:
                 logger.info(f'Job {submission_id} already claimed')
                 return None
             if not resp.ok:
-                logger.warning(f'Failed to claim job {submission_id}: {resp.status_code}')
+                logger.warning(
+                    f'Failed to claim job {submission_id}: {resp.status_code}')
                 return None
             data = resp.json()['data']
             return JobInfo(
@@ -169,10 +172,8 @@ class Runner:
             timeout=60,
         )
         if not resp.ok:
-            logger.error(
-                f'Failed to report result for {submission_id}: '
-                f'{resp.status_code} {resp.text}'
-            )
+            logger.error(f'Failed to report result for {submission_id}: '
+                         f'{resp.status_code} {resp.text}')
             return False
         return True
 
@@ -260,11 +261,13 @@ class Runner:
                     # Read config to get working_dir for host paths
                     with open('.config/submission.json') as f:
                         s_config = json.load(f)
-                    host_base = pathlib.Path(s_config['working_dir']) / submission_id / 'testcase'
+                    host_base = pathlib.Path(
+                        s_config['working_dir']) / submission_id / 'testcase'
                     container_base = submission_dir / 'testcase'
 
                     in_path = str((host_base / f'{case_no}.in').absolute())
-                    out_path = str((container_base / f'{case_no}.out').absolute())
+                    out_path = str(
+                        (container_base / f'{case_no}.out').absolute())
 
                     logger.info(f'Executing {submission_id}/{case_no}')
                     runner = SubmissionRunner(
@@ -357,7 +360,7 @@ class Runner:
 
                 thread = threading.Thread(
                     target=self.process_job,
-                    args=(job,),
+                    args=(job, ),
                     daemon=True,
                 )
                 thread.start()
