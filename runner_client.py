@@ -26,8 +26,6 @@ import os
 import pathlib
 import shutil
 import signal
-import sys
-import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -56,6 +54,16 @@ SUBMISSION_DIR = pathlib.Path(os.getenv('SUBMISSION_DIR', 'submissions'))
 HEARTBEAT_INTERVAL = 60  # seconds
 
 SUBMISSION_DIR.mkdir(exist_ok=True)
+
+
+def _safe_extractall(zf: ZipFile, dest: pathlib.Path):
+    """Extract zip while rejecting paths that escape dest (Zip Slip)."""
+    dest = dest.resolve()
+    for member in zf.infolist():
+        target = (dest / member.filename).resolve()
+        if not str(target).startswith(str(dest) + os.sep) and target != dest:
+            raise ValueError(f'Zip Slip detected: {member.filename}')
+    zf.extractall(dest)
 
 
 @dataclass
@@ -136,7 +144,7 @@ class Runner:
         src_dir = dest_dir / 'src'
         src_dir.mkdir(exist_ok=True)
         with ZipFile(io.BytesIO(resp.content)) as zf:
-            zf.extractall(src_dir)
+            _safe_extractall(zf, src_dir)
 
     def download_testdata(self, submission_id: str, dest_dir: pathlib.Path):
         """Download testdata zip and extract to dest_dir/testcase/."""
@@ -148,7 +156,7 @@ class Runner:
         testcase_dir = dest_dir / 'testcase'
         testcase_dir.mkdir(exist_ok=True)
         with ZipFile(io.BytesIO(resp.content)) as zf:
-            zf.extractall(testcase_dir)
+            _safe_extractall(zf, testcase_dir)
 
     def send_heartbeat(self, submission_id: str):
         """Send heartbeat to extend claim timeout."""
@@ -239,6 +247,13 @@ class Runner:
                 ).compile()
                 logger.info(f'Compile result: {compile_result["Status"]}')
 
+            # Read config once for host path resolution
+            with open('.config/submission.json') as f:
+                s_config = json.load(f)
+            host_base = pathlib.Path(
+                s_config['working_dir']) / submission_id / 'testcase'
+            container_base = submission_dir / 'testcase'
+
             # Execute each test case
             results = {}
             for i, task in enumerate(meta.tasks):
@@ -256,14 +271,6 @@ class Runner:
                             'status': 'CE',
                         }
                         continue
-
-                    # Build paths
-                    # Read config to get working_dir for host paths
-                    with open('.config/submission.json') as f:
-                        s_config = json.load(f)
-                    host_base = pathlib.Path(
-                        s_config['working_dir']) / submission_id / 'testcase'
-                    container_base = submission_dir / 'testcase'
 
                     in_path = str((host_base / f'{case_no}.in').absolute())
                     out_path = str(

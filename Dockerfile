@@ -10,7 +10,7 @@ RUN pip install -r requirements.txt
 ENV SANDBOX_MODE=push
 
 CMD if [ "$SANDBOX_MODE" = "pull" ]; then \
-      python runner_client.py; \
+      exec python runner_client.py; \
     else \
-      gunicorn -c gunicorn.conf.py app:app; \
+      exec gunicorn -c gunicorn.conf.py app:app; \
     fi
