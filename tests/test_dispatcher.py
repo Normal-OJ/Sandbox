@@ -93,3 +93,60 @@ def test_handle_works_without_job_id_for_backwards_compat(
 
     # Should not raise, and submission should be tracked
     assert docker_dispatcher.contains(sub_id)
+
+
+import threading
+from unittest.mock import MagicMock
+
+
+def _setup_fake_submission(docker_dispatcher, submission_id, job_id):
+    """Helper: set up fake in-memory state + create the submission dir on disk."""
+    from dispatcher import file_manager
+    docker_dispatcher.testing = False
+    docker_dispatcher.job_ids[submission_id] = job_id
+    docker_dispatcher.result[submission_id] = (
+        MagicMock(language=2),  # python doesn't compile
+        {
+            "0000": {
+                "stdout": "",
+                "stderr": "",
+                "exitCode": 0,
+                "execTime": 1,
+                "memoryUsage": 1,
+                "status": "AC"
+            },
+        },
+    )
+    docker_dispatcher.locks[submission_id] = threading.Lock()
+    docker_dispatcher.compile_locks[submission_id] = threading.Lock()
+    docker_dispatcher.created_at[submission_id] = __import__(
+        "datetime").datetime.now()
+    # create submission dir so file_manager.clean_data doesn't fail
+    sub_dir = file_manager.config.SUBMISSION_DIR / submission_id
+    sub_dir.mkdir(parents=True, exist_ok=True)
+
+
+def test_on_submission_complete_pushes_to_result_queue(docker_dispatcher):
+    """When a submission is done, result lands in result_queue (no HTTP)."""
+    from agent.result_sender import JobResult
+
+    _setup_fake_submission(docker_dispatcher, "sub_1", "jb_1")
+    docker_dispatcher.on_submission_complete("sub_1")
+
+    pushed = docker_dispatcher.result_queue.get_nowait()
+    assert isinstance(pushed, JobResult)
+    assert pushed.job_id == "jb_1"
+    assert isinstance(pushed.tasks, list)
+    assert len(pushed.tasks) == 1
+
+
+def test_on_submission_complete_releases_state_after_push(docker_dispatcher):
+    """After completion, submission state should be cleared."""
+    from agent.result_sender import JobResult
+
+    _setup_fake_submission(docker_dispatcher, "sub_2", "jb_2")
+    docker_dispatcher.on_submission_complete("sub_2")
+
+    # State cleaned up
+    assert "sub_2" not in docker_dispatcher.result
+    assert "sub_2" not in docker_dispatcher.job_ids

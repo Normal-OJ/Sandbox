@@ -2,11 +2,9 @@ import json
 import os
 import threading
 import time
-import requests
 import pathlib
 import queue
 import shutil
-import tempfile
 from datetime import datetime
 
 from runner.submission import SubmissionRunner
@@ -373,46 +371,36 @@ class Dispatcher(threading.Thread):
                 f'skip submission post processing in testing [submission_id={submission_id}]'
             )
             return True
+
         _, results = self.result[submission_id]
-        # parse results
+        # parse results into nested list-of-tasks shape
         submission_result = {}
         for no, r in results.items():
             task_no = int(no[:2])
             case_no = int(no[2:])
-            if task_no not in submission_result:
-                submission_result[task_no] = {}
-            submission_result[task_no][case_no] = r
+            submission_result.setdefault(task_no, {})[case_no] = r
         # convert to list and check
         for task_no, cases in submission_result.items():
             assert [*cases.keys()] == [*range(len(cases))]
             submission_result[task_no] = [*cases.values()]
         assert [*submission_result.keys()] == [*range(len(submission_result))]
         submission_result = [*submission_result.values()]
-        # post data
-        with tempfile.NamedTemporaryFile("w") as tmpf:
-            submission_data = {
-                'tasks': submission_result,
-                'token': config.SANDBOX_TOKEN
-            }
-            # write payload to file
-            json.dump(submission_data, tmpf)
-            tmpf.flush()
-            # release resources
-            del submission_data
-            self.release(submission_id)
 
-            logger().info(f'send to BE [submission_id={submission_id}]')
-            # open in binary mode as requests needs a binary stream
-            with open(tmpf.name, "rb") as payload:
-                resp = requests.put(
-                    f'{config.BACKEND_API}/submission/{submission_id}/complete',
-                    data=payload,
-                    headers={'Content-Type': 'application/json'},
-                )
-        logger().debug(f'get BE response: [{resp.status_code}] {resp.text}', )
-        # clear
-        if resp.ok:
-            file_manager.clean_data(submission_id)
-        # copy to another place
-        else:
-            file_manager.backup_data(submission_id)
+        # Push to result_queue for agent's result_sender to deliver
+        from agent.result_sender import JobResult
+        job_id = self.job_ids.get(submission_id)
+        if job_id is None:
+            logger().error(
+                f"submission_complete with no job_id mapping [submission_id={submission_id}]"
+            )
+            # Don't release — let lease expire and reclaim happen on backend
+            return
+
+        self.result_queue.put(JobResult(job_id=job_id,
+                                        tasks=submission_result))
+
+        # Clean up local state
+        file_manager.clean_data(submission_id)
+        self.release(submission_id)
+        if submission_id in self.job_ids:
+            del self.job_ids[submission_id]
