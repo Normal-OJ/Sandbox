@@ -6,4 +6,7 @@ WORKDIR /app
 COPY requirements.txt requirements.txt
 RUN pip install -r requirements.txt
 
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]
+# Make logs directory exist
+RUN mkdir -p logs
+
+CMD ["python", "main.py"]
