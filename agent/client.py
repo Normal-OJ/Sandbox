@@ -22,24 +22,30 @@ class BackendClient:
     def register(self, name: str, registration_token: str) -> dict:
         """Register this runner. Returns the `data` payload from backend."""
         rv = self._request(
-            "POST", "/runners/register",
-            json_body={"registration_token": registration_token, "name": name},
+            "POST",
+            "/runners/register",
+            json_body={
+                "registration_token": registration_token,
+                "name": name
+            },
             need_auth=False,
-            expected_statuses=(201,),
+            expected_statuses=(201, ),
         )
         return rv.json()["data"]
 
     def heartbeat(self, runner_id: str) -> None:
         """Send a heartbeat. Raises AuthError on 401."""
         self._request(
-            "POST", f"/runners/{runner_id}/heartbeat",
-            expected_statuses=(204,),
+            "POST",
+            f"/runners/{runner_id}/heartbeat",
+            expected_statuses=(204, ),
         )
 
     def next_job(self, runner_id: str) -> dict | None:
         """Poll for next job. Returns None if no job available (204)."""
         rv = self._request(
-            "GET", f"/runners/{runner_id}/next-job",
+            "GET",
+            f"/runners/{runner_id}/next-job",
             expected_statuses=(200, 204),
         )
         if rv.status_code == 204:
@@ -52,7 +58,8 @@ class BackendClient:
         Raises TransientError on 5xx or network — caller should retry.
         """
         rv = self._request(
-            "PUT", f"/runners/{runner_id}/jobs/{job_id}/complete",
+            "PUT",
+            f"/runners/{runner_id}/jobs/{job_id}/complete",
             json_body={"tasks": tasks},
             expected_statuses=(204, 409, 404),
         )
@@ -61,7 +68,8 @@ class BackendClient:
     def download_code(self, code_url: str, dest_path: str) -> None:
         """Download code zip from a presigned URL."""
         try:
-            with requests.get(code_url, stream=True,
+            with requests.get(code_url,
+                              stream=True,
                               timeout=config.HTTP_REQUEST_TIMEOUT_SEC) as r:
                 r.raise_for_status()
                 with open(dest_path, "wb") as f:
@@ -72,9 +80,14 @@ class BackendClient:
 
     # ------- Internals -------
 
-    def _request(self, method: str, path: str, *,
-                 json_body=None, need_auth=True,
-                 expected_statuses=(200,)) -> requests.Response:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body=None,
+        need_auth=True,
+        expected_statuses=(200, )) -> requests.Response:
         headers = {}
         if need_auth:
             if not self.rk_token:
@@ -99,6 +112,5 @@ class BackendClient:
             raise self.TransientError(f"backend {rv.status_code}: {rv.text}")
         if rv.status_code not in expected_statuses:
             raise self.TransientError(
-                f"unexpected status {rv.status_code}: {rv.text}"
-            )
+                f"unexpected status {rv.status_code}: {rv.text}")
         return rv

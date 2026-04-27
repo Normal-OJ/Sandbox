@@ -1,5 +1,6 @@
 """Tests for the BackendClient HTTP wrapper."""
 import pytest
+import requests
 import responses
 
 from agent.client import BackendClient
@@ -15,7 +16,11 @@ def test_register_posts_to_correct_url(client):
     responses.add(
         responses.POST,
         "http://test-backend/runners/register",
-        json={"data": {"runner_id": "rn_1", "token": "rk_xyz", "config": {}}},
+        json={"data": {
+            "runner_id": "rn_1",
+            "token": "rk_xyz",
+            "config": {}
+        }},
         status=201,
     )
     rv = client.register(name="r1", registration_token="dev-token")
@@ -55,9 +60,17 @@ def test_next_job_returns_payload_when_200(client):
     responses.add(
         responses.GET,
         "http://test-backend/runners/rn_1/next-job",
-        json={"data": {"job_id": "jb_1", "submission_id": "sub_1",
-                       "problem_id": 42, "language": 0, "code_url": "http://...",
-                       "checker": "", "tasks": []}},
+        json={
+            "data": {
+                "job_id": "jb_1",
+                "submission_id": "sub_1",
+                "problem_id": 42,
+                "language": 0,
+                "code_url": "http://...",
+                "checker": "",
+                "tasks": []
+            }
+        },
         status=200,
     )
     job = client.next_job(runner_id="rn_1")
@@ -113,3 +126,39 @@ def test_complete_job_raises_on_5xx(client):
     )
     with pytest.raises(BackendClient.TransientError):
         client.complete_job("rn_1", "jb_1", tasks=[])
+
+
+@responses.activate
+def test_download_code_writes_to_dest_path(tmp_path, client):
+    responses.add(
+        responses.GET,
+        "http://minio/code.zip",
+        body=b"PK\x03\x04zipcontent",
+        status=200,
+    )
+    dest = tmp_path / "code.zip"
+    client.download_code("http://minio/code.zip", str(dest))
+    assert dest.read_bytes() == b"PK\x03\x04zipcontent"
+
+
+@responses.activate
+def test_download_code_raises_transient_on_404(tmp_path, client):
+    responses.add(
+        responses.GET,
+        "http://minio/missing.zip",
+        status=404,
+    )
+    with pytest.raises(BackendClient.TransientError):
+        client.download_code("http://minio/missing.zip",
+                             str(tmp_path / "x.zip"))
+
+
+@responses.activate
+def test_download_code_raises_transient_on_network_error(tmp_path, client):
+    responses.add(
+        responses.GET,
+        "http://nowhere/x.zip",
+        body=requests.exceptions.ConnectionError("refused"),
+    )
+    with pytest.raises(BackendClient.TransientError):
+        client.download_code("http://nowhere/x.zip", str(tmp_path / "x.zip"))
