@@ -1,2 +1,3 @@
 pytest
 fakeredis~=1.7
+responses~=0.25
