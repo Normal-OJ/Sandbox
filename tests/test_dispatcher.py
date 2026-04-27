@@ -67,3 +67,29 @@ def test_dispatcher_exposes_job_ids_mapping(docker_dispatcher):
     """Dispatcher should track submission_id -> job_id mapping."""
     assert isinstance(docker_dispatcher.job_ids, dict)
     assert docker_dispatcher.job_ids == {}
+
+
+def test_handle_records_job_id(docker_dispatcher, submission_generator):
+    """When poller calls handle() with job_id, dispatcher records the mapping."""
+    docker_dispatcher.start()
+    submission_ids = list(submission_generator.submission_ids.keys())
+    assert submission_ids, "submission_generator should have created at least one submission"
+    sub_id = submission_ids[0]
+
+    docker_dispatcher.handle(submission_id=sub_id, job_id="jb_xyz")
+
+    assert docker_dispatcher.job_ids.get(sub_id) == "jb_xyz"
+
+
+def test_handle_works_without_job_id_for_backwards_compat(
+        docker_dispatcher, submission_generator):
+    """handle() should work without job_id — for backwards compat with existing tests."""
+    docker_dispatcher.start()
+    submission_ids = list(submission_generator.submission_ids.keys())
+    assert submission_ids
+    sub_id = submission_ids[0]
+
+    docker_dispatcher.handle(submission_id=sub_id)  # no job_id
+
+    # Should not raise, and submission should be tracked
+    assert docker_dispatcher.contains(sub_id)

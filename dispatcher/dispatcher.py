@@ -118,7 +118,7 @@ class Dispatcher(threading.Thread):
             else:
                 raise
 
-    def handle(self, submission_id: str):
+    def handle(self, submission_id: str, job_id: str = None):
         '''
         handle a submission, save its config and push into task queue
         '''
@@ -144,6 +144,8 @@ class Dispatcher(threading.Thread):
         self.locks[submission_id] = threading.Lock()
         self.compile_locks[submission_id] = threading.Lock()
         self.created_at[submission_id] = datetime.now()
+        if job_id is not None:
+            self.job_ids[submission_id] = job_id
 
         logger().debug(f'current submissions: {[*self.result.keys()]}')
         try:
