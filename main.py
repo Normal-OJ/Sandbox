@@ -21,6 +21,7 @@ from agent.heartbeat import HeartbeatThread
 from agent.poller import PollerThread
 from agent.registration import register_runner
 from agent.result_sender import ResultSenderThread
+from dispatcher import testdata as dispatcher_testdata
 from dispatcher.dispatcher import Dispatcher
 
 # Ensure logs/ directory exists before configuring file handler
@@ -49,6 +50,7 @@ def main():
         registration_token=agent_config.RUNNER_REGISTRATION_TOKEN,
     )
     log.info(f"registered as {creds.runner_id}")
+    dispatcher_testdata.set_runner_token(creds.token)
 
     # 2. Authenticated client used by all daemon threads
     client = BackendClient(rk_token=creds.token)

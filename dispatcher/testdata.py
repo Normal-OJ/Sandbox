@@ -15,9 +15,24 @@ from .utils import (
 )
 from .config import (
     BACKEND_API,
-    SANDBOX_TOKEN,
     TESTDATA_ROOT,
 )
+
+_RK_TOKEN: str | None = None
+
+
+def set_runner_token(rk_token: str) -> None:
+    """Called once after registration to give testdata module the rk_token."""
+    global _RK_TOKEN
+    _RK_TOKEN = rk_token
+
+
+def _get_token() -> str:
+    if _RK_TOKEN is None:
+        raise RuntimeError(
+            "runner token not set; call set_runner_token() first")
+    return _RK_TOKEN
+
 
 META_DIR = TESTDATA_ROOT / 'meta'
 META_DIR.mkdir(exist_ok=True)
@@ -43,7 +58,7 @@ def fetch_problem_meta(problem_id: int) -> str:
     resp = rq.get(
         f'{BACKEND_API}/problem/{problem_id}/meta',
         params={
-            'token': SANDBOX_TOKEN,
+            'token': _get_token(),
         },
     )
     handle_problem_response(resp)
@@ -73,7 +88,7 @@ def fetch_testdata(problem_id: int):
     resp = rq.get(
         f'{BACKEND_API}/problem/{problem_id}/testdata',
         params={
-            'token': SANDBOX_TOKEN,
+            'token': _get_token(),
         },
     )
     handle_problem_response(resp)
@@ -84,7 +99,7 @@ def get_checksum(problem_id: int) -> str:
     resp = rq.get(
         f'{BACKEND_API}/problem/{problem_id}/checksum',
         params={
-            'token': SANDBOX_TOKEN,
+            'token': _get_token(),
         },
     )
     handle_problem_response(resp)
