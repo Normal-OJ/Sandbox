@@ -48,3 +48,22 @@ def test_duplicated_submission(
     except DuplicatedSubmissionIdError:
         return
     assert False
+
+
+import queue
+
+
+def test_dispatcher_has_capacity_returns_true_when_queue_empty(
+        docker_dispatcher):
+    assert docker_dispatcher.has_capacity() is True
+
+
+def test_dispatcher_exposes_result_queue(docker_dispatcher):
+    """Dispatcher should expose a result_queue that result_sender drains."""
+    assert isinstance(docker_dispatcher.result_queue, queue.Queue)
+
+
+def test_dispatcher_exposes_job_ids_mapping(docker_dispatcher):
+    """Dispatcher should track submission_id -> job_id mapping."""
+    assert isinstance(docker_dispatcher.job_ids, dict)
+    assert docker_dispatcher.job_ids == {}

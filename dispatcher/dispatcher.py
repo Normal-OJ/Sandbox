@@ -57,6 +57,20 @@ class Dispatcher(threading.Thread):
         self.timeout = 300
         self.created_at = {}
 
+        # Result queue: completed submissions are pushed here for the agent's
+        # result_sender thread to deliver to backend.
+        self.result_queue: queue.Queue = queue.Queue()
+
+        # Map submission_id -> job_id (set when handle() is called by poller)
+        self.job_ids: dict = {}
+
+    def has_capacity(self) -> bool:
+        """Whether dispatcher can accept a new submission right now.
+
+        Leaves 30% headroom — when queue gets near full, stop pulling new work.
+        """
+        return self.queue.qsize() < int(self.MAX_TASK_COUNT * 0.7)
+
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}
 
