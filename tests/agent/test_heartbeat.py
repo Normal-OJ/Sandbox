@@ -13,8 +13,10 @@ def test_heartbeat_calls_client_at_interval():
     shutdown = threading.Event()
 
     hb = HeartbeatThread(
-        client=client, runner_id="rn_1",
-        interval_sec=0.05, shutdown_event=shutdown,
+        client=client,
+        runner_id="rn_1",
+        interval_sec=0.05,
+        shutdown_event=shutdown,
     )
     hb.start()
     time.sleep(0.18)  # ~3 intervals
@@ -36,8 +38,10 @@ def test_heartbeat_swallows_transient_errors_and_keeps_going():
     shutdown = threading.Event()
 
     hb = HeartbeatThread(
-        client=client, runner_id="rn_1",
-        interval_sec=0.05, shutdown_event=shutdown,
+        client=client,
+        runner_id="rn_1",
+        interval_sec=0.05,
+        shutdown_event=shutdown,
     )
     hb.start()
     time.sleep(0.2)
@@ -52,7 +56,8 @@ def test_heartbeat_stops_promptly_on_shutdown():
     client = MagicMock(spec=BackendClient)
     shutdown = threading.Event()
     hb = HeartbeatThread(
-        client=client, runner_id="rn_1",
+        client=client,
+        runner_id="rn_1",
         interval_sec=10.0,  # long interval
         shutdown_event=shutdown,
     )

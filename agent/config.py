@@ -27,5 +27,6 @@ RESULT_RETRY_MAX_BACKOFF_SEC: float = 16.0
 HTTP_REQUEST_TIMEOUT_SEC: int = 10
 
 # Where to download code zip to (per-job temp dir)
-CODE_DOWNLOAD_DIR: Path = Path(os.getenv("CODE_DOWNLOAD_DIR", "/tmp/runner-code"))
+CODE_DOWNLOAD_DIR: Path = Path(
+    os.getenv("CODE_DOWNLOAD_DIR", "/tmp/runner-code"))
 CODE_DOWNLOAD_DIR.mkdir(exist_ok=True)

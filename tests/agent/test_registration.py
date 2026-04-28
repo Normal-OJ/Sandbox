@@ -15,7 +15,8 @@ def test_register_runner_returns_credentials_and_config():
         },
     }
 
-    result = register_runner(fake_client, name="r1",
+    result = register_runner(fake_client,
+                             name="r1",
                              registration_token="dev-token")
 
     assert result.runner_id == "rn_xyz"
@@ -25,18 +26,18 @@ def test_register_runner_returns_credentials_and_config():
     assert result.max_concurrent_jobs == 4
 
     fake_client.register.assert_called_once_with(
-        name="r1", registration_token="dev-token"
-    )
+        name="r1", registration_token="dev-token")
 
 
 def test_register_runner_uses_defaults_for_missing_config_fields():
     fake_client = MagicMock(spec=BackendClient)
     fake_client.register.return_value = {
-        "runner_id": "rn_a", "token": "rk_a", "config": {},
+        "runner_id": "rn_a",
+        "token": "rk_a",
+        "config": {},
     }
 
-    result = register_runner(fake_client, name="r1",
-                             registration_token="t")
+    result = register_runner(fake_client, name="r1", registration_token="t")
 
     # Backend should always send config, but defensively use sensible defaults
     assert result.heartbeat_interval_sec == 15
