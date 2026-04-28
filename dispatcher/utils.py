@@ -1,14 +1,10 @@
 import logging
 import os
 import redis
-from flask import current_app
 
 
 def logger() -> logging.Logger:
-    try:
-        return current_app.logger
-    except RuntimeError:
-        return logging.getLogger('dispatcher')
+    return logging.getLogger('dispatcher')
 
 
 # Fake redis server
