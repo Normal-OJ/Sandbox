@@ -1,0 +1,56 @@
+name: Publish Docker Images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'c_cpp_dockerfile'
+      - 'python3_dockerfile'
+
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download sandbox binary
+        run: |
+          wget https://github.com/Normal-OJ/C-Sandbox/releases/latest/download/sandbox
+          chmod +x sandbox
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push noj-c-cpp
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: c_cpp_dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/normal-oj/noj-c-cpp:latest
+            ${{ env.REGISTRY }}/normal-oj/noj-c-cpp:${{ github.sha }}
+
+      - name: Build and push noj-py3
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: python3_dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/normal-oj/noj-py3:latest
+            ${{ env.REGISTRY }}/normal-oj/noj-py3:${{ github.sha }}

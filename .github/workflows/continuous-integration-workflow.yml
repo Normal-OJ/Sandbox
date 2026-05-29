@@ -46,9 +46,13 @@ jobs:
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
       
-      - name: Build sandbox
-        run: ./build.sh
-      
+      - name: Pull Docker images
+        run: |
+          docker pull ghcr.io/normal-oj/noj-c-cpp:latest || true
+          docker pull ghcr.io/normal-oj/noj-py3:latest || true
+          docker tag ghcr.io/normal-oj/noj-c-cpp:latest noj-c-cpp || true
+          docker tag ghcr.io/normal-oj/noj-py3:latest noj-py3 || true
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
