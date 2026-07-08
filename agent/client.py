@@ -65,6 +65,17 @@ class BackendClient:
         )
         return {204: "ok", 409: "reclaimed", 404: "not_found"}[rv.status_code]
 
+    def abort_job(self, runner_id: str, job_id: str, reason: str) -> str:
+        """Tell backend this runner cannot process the leased job."""
+        rv = self._request(
+            "PUT",
+            f"/runners/{runner_id}/jobs/{job_id}/abort",
+            json_body={"reason": reason},
+            expected_statuses=(202, 409, 404),
+        )
+        return {202: "requeued", 409: "reclaimed", 404: "not_found"}[
+            rv.status_code]
+
     def download_code(self, code_url: str, dest_path: str) -> None:
         """Download code zip from a presigned URL."""
         try:

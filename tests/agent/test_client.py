@@ -118,6 +118,19 @@ def test_complete_job_returns_not_found_on_404(client):
 
 
 @responses.activate
+def test_abort_job_puts_reason_and_returns_status_string(client):
+    responses.add(
+        responses.PUT,
+        "http://test-backend/runners/rn_1/jobs/jb_1/abort",
+        status=202,
+    )
+    assert client.abort_job("rn_1", "jb_1", reason="prepare failed") == "requeued"
+    req = responses.calls[0].request
+    assert req.headers["Authorization"] == "Bearer rk_test"
+    assert req.body == b'{"reason": "prepare failed"}'
+
+
+@responses.activate
 def test_complete_job_raises_on_5xx(client):
     responses.add(
         responses.PUT,

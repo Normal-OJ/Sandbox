@@ -94,4 +94,13 @@ class PollerThread(threading.Thread):
             except Exception as e:
                 log.exception(
                     f"failed to dispatch job {job.get('job_id')}: {e}")
-                # Don't retry — backend will reclaim after lease expiry.
+                try:
+                    self.client.abort_job(
+                        runner_id=self.runner_id,
+                        job_id=job["job_id"],
+                        reason=str(e),
+                    )
+                except Exception as abort_error:
+                    log.warning(
+                        f"failed to abort job {job.get('job_id')}: {abort_error}"
+                    )
