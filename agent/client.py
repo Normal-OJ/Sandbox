@@ -73,8 +73,11 @@ class BackendClient:
             json_body={"reason": reason},
             expected_statuses=(202, 409, 404),
         )
-        return {202: "requeued", 409: "reclaimed", 404: "not_found"}[
-            rv.status_code]
+        return {
+            202: "requeued",
+            409: "reclaimed",
+            404: "not_found"
+        }[rv.status_code]
 
     def download_code(self, code_url: str, dest_path: str) -> None:
         """Download code zip from a presigned URL."""
