@@ -277,6 +277,6 @@ def test_rejected_result_aborts_and_finalizes():
     client.abort_job.assert_called_once_with(
         runner_id="rn_1",
         job_id="jb_1",
-        reason="result delivery failed after 1 attempts",
+        reason="result rejected by backend (invalid payload)",
     )
     finalize.assert_called_once_with("sub_1")

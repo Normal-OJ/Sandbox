@@ -96,11 +96,21 @@ class ResultSenderThread(threading.Thread):
                 return
             if outcome == "rejected":
                 log.error(f"{jr.job_id} rejected by backend; aborting")
-                self._abort_failed_delivery(jr, attempt)
+                self._abort_failed_delivery(
+                    jr,
+                    attempt,
+                    reason="result rejected by backend (invalid payload)",
+                )
                 return
 
-    def _abort_failed_delivery(self, jr: JobResult, attempts: int) -> None:
-        reason = f"result delivery failed after {attempts} attempts"
+    def _abort_failed_delivery(
+        self,
+        jr: JobResult,
+        attempts: int,
+        reason: str | None = None,
+    ) -> None:
+        if reason is None:
+            reason = f"result delivery failed after {attempts} attempts"
         backoff = self.retry_initial_backoff_sec
         for attempt in range(1, 4):
             try:

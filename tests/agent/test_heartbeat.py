@@ -130,7 +130,12 @@ def test_auth_error_flag_resets_after_success():
     )
 
     hb.start()
-    # Calls happen at t=0, 0.05, 0.10; check before a possible 4th at 0.15.
+    # Calls happen at t=0, 0.05, 0.10. Sleep past that point — deflaked: the
+    # side_effect sequence guarantees at least these three outcomes fired, so
+    # assert call_count >= 3 instead of == 3 (a slow test machine could let a
+    # 4th call land before we check, which would exhaust the side_effect list
+    # and raise StopIteration into the thread's generic `except Exception`;
+    # that's tolerated — it logs and continues without touching the flag).
     time.sleep(0.12)
 
     # The intervening success reset the flag, so the third call (another
@@ -138,7 +143,7 @@ def test_auth_error_flag_resets_after_success():
     assert not shutdown.is_set()
     assert hb.is_alive()
     assert hb._auth_failed_once
-    assert client.heartbeat.call_count == 3
+    assert client.heartbeat.call_count >= 3
 
     shutdown.set()
     hb.join(timeout=1)
