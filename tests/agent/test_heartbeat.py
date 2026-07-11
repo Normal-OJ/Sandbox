@@ -68,20 +68,77 @@ def test_heartbeat_stops_promptly_on_shutdown():
     assert not hb.is_alive(), "heartbeat thread should exit promptly"
 
 
-def test_heartbeat_auth_error_triggers_shutdown():
+def test_heartbeat_two_consecutive_auth_errors_triggers_shutdown():
     client = MagicMock(spec=BackendClient)
     client.heartbeat.side_effect = BackendClient.AuthError("forgot runner")
     shutdown = threading.Event()
     hb = HeartbeatThread(
         client=client,
         runner_id="rn_1",
-        interval_sec=10.0,
+        interval_sec=0.01,
         shutdown_event=shutdown,
     )
 
     hb.start()
-    hb.join(timeout=0.5)
+    hb.join(timeout=1)
 
     assert shutdown.is_set()
     assert not hb.is_alive()
+    assert client.heartbeat.call_count == 2
+
+
+def test_single_auth_error_does_not_shutdown():
+    """A single AuthError shouldn't kill the agent — only two in a row."""
+    client = MagicMock(spec=BackendClient)
+    client.heartbeat.side_effect = BackendClient.AuthError("forgot runner")
+    shutdown = threading.Event()
+    hb = HeartbeatThread(
+        client=client,
+        runner_id="rn_1",
+        interval_sec=10.0,  # long wait so only one call happens during test
+        shutdown_event=shutdown,
+    )
+
+    hb.start()
+    hb.join(timeout=0.5)  # thread keeps waiting; join times out, doesn't exit
+
+    # First AuthError alone must not have set shutdown or killed the thread.
+    assert not shutdown.is_set()
+    assert hb.is_alive()
+    assert hb._auth_failed_once
     client.heartbeat.assert_called_once_with(runner_id="rn_1")
+
+    # Cleanup: unblock the thread's long wait so it doesn't linger.
+    shutdown.set()
+    hb.join(timeout=1)
+
+
+def test_auth_error_flag_resets_after_success():
+    """A success between two AuthErrors resets the confirm-once flag."""
+    client = MagicMock(spec=BackendClient)
+    client.heartbeat.side_effect = [
+        BackendClient.AuthError("forgot runner"),
+        None,
+        BackendClient.AuthError("forgot runner again"),
+    ]
+    shutdown = threading.Event()
+    hb = HeartbeatThread(
+        client=client,
+        runner_id="rn_1",
+        interval_sec=0.05,
+        shutdown_event=shutdown,
+    )
+
+    hb.start()
+    # Calls happen at t=0, 0.05, 0.10; check before a possible 4th at 0.15.
+    time.sleep(0.12)
+
+    # The intervening success reset the flag, so the third call (another
+    # single AuthError) must not trigger shutdown either.
+    assert not shutdown.is_set()
+    assert hb.is_alive()
+    assert hb._auth_failed_once
+    assert client.heartbeat.call_count == 3
+
+    shutdown.set()
+    hb.join(timeout=1)

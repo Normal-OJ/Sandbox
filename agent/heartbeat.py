@@ -22,6 +22,7 @@ class HeartbeatThread(threading.Thread):
         self.runner_id = runner_id
         self.interval_sec = interval_sec
         self.shutdown_event = shutdown_event
+        self._auth_failed_once = False
 
     def run(self) -> None:
         while not self.shutdown_event.is_set():
@@ -31,9 +32,14 @@ class HeartbeatThread(threading.Thread):
                 log.warning(f"heartbeat failed (transient): {e}")
             except BackendClient.AuthError as e:
                 log.error(f"heartbeat auth failed: {e}")
-                self.shutdown_event.set()
-                break
+                if self._auth_failed_once:
+                    log.error("second consecutive auth failure; shutting down")
+                    self.shutdown_event.set()
+                    break
+                self._auth_failed_once = True
             except Exception as e:  # defensive — never let thread die
                 log.exception(f"heartbeat unexpected error: {e}")
+            else:
+                self._auth_failed_once = False
             # Wait, but break early on shutdown
             self.shutdown_event.wait(timeout=self.interval_sec)

@@ -114,10 +114,23 @@ def main():
     while not shutdown_event.is_set():
         time.sleep(1)
 
-    # 6. Graceful drain — give result_sender up to 60s to flush
+    # 6. Graceful drain — deliver what we have, then hand back the rest
     dispatcher.stop()
-    log.info("waiting for in-flight work to complete (max 60s)")
+    log.info("draining result queue (max 60s)")
     sender.join(timeout=60)
+    # Anything still tracked never got its result delivered — abort so
+    # backend requeues immediately instead of waiting for lease expiry.
+    for submission_id, job_id in list(dispatcher.job_ids.items()):
+        try:
+            client.abort_job(runner_id=creds.runner_id,
+                             job_id=job_id,
+                             reason="runner shutting down")
+            log.info(f"handed back {job_id} on shutdown")
+        except Exception as e:
+            log.warning(f"failed to hand back {job_id}: {e}")
+    if not dispatcher.result_queue.empty():
+        log.error(f"exiting with {dispatcher.result_queue.qsize()} "
+                  f"undelivered results")
     log.info("runner agent exiting")
 
 

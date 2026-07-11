@@ -252,6 +252,54 @@ def test_prepare_exhausts_retries_then_aborts():
     )
 
 
+def test_poller_single_auth_error_does_not_shutdown():
+    """A single AuthError shouldn't kill the agent — only two in a row."""
+    client = MagicMock(spec=BackendClient)
+    client.next_job.side_effect = BackendClient.AuthError("forgot runner")
+    dispatcher = _make_dispatcher()
+    shutdown = threading.Event()
+
+    poller = PollerThread(
+        client=client,
+        runner_id="rn_1",
+        dispatcher=dispatcher,
+        poll_interval_sec=10.0,  # long wait so only one call happens
+        shutdown_event=shutdown,
+    )
+    poller.start()
+    poller.join(timeout=0.5)  # times out; thread is still waiting
+
+    assert not shutdown.is_set()
+    assert poller.is_alive()
+    assert poller._auth_failed_once
+    client.next_job.assert_called_once_with(runner_id="rn_1")
+
+    # Cleanup: unblock the thread's long wait so it doesn't linger.
+    shutdown.set()
+    poller.join(timeout=1)
+
+
+def test_poller_two_consecutive_auth_errors_triggers_shutdown():
+    client = MagicMock(spec=BackendClient)
+    client.next_job.side_effect = BackendClient.AuthError("forgot runner")
+    dispatcher = _make_dispatcher()
+    shutdown = threading.Event()
+
+    poller = PollerThread(
+        client=client,
+        runner_id="rn_1",
+        dispatcher=dispatcher,
+        poll_interval_sec=0.01,
+        shutdown_event=shutdown,
+    )
+    poller.start()
+    poller.join(timeout=1)
+
+    assert shutdown.is_set()
+    assert not poller.is_alive()
+    assert client.next_job.call_count == 2
+
+
 def test_poller_retries_abort_on_transient_errors():
     client = MagicMock(spec=BackendClient)
     client.abort_job.side_effect = [

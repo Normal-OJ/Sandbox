@@ -57,6 +57,7 @@ class PollerThread(threading.Thread):
         self.dispatcher = dispatcher
         self.poll_interval_sec = poll_interval_sec
         self.shutdown_event = shutdown_event
+        self._auth_failed_once = False
 
     def run(self) -> None:
         while not self.shutdown_event.is_set():
@@ -71,12 +72,19 @@ class PollerThread(threading.Thread):
                 continue
             except BackendClient.AuthError as e:
                 log.error(f"next_job auth failed: {e}")
-                self.shutdown_event.set()
-                break
+                if self._auth_failed_once:
+                    log.error("second consecutive auth failure; shutting down")
+                    self.shutdown_event.set()
+                    break
+                self._auth_failed_once = True
+                self.shutdown_event.wait(timeout=self.poll_interval_sec)
+                continue
             except Exception as e:
                 log.warning(f"next_job unexpected error: {e}")
                 self.shutdown_event.wait(timeout=self.poll_interval_sec)
                 continue
+            else:
+                self._auth_failed_once = False
 
             if job is None:
                 self.shutdown_event.wait(timeout=self.poll_interval_sec)
