@@ -98,6 +98,16 @@ def test_complete_job_returns_status_string(client):
 
 
 @responses.activate
+def test_complete_job_returns_rejected_on_400(client):
+    responses.add(
+        responses.PUT,
+        "http://test-backend/runners/rn_1/jobs/jb_1/complete",
+        status=400,
+    )
+    assert client.complete_job("rn_1", "jb_1", tasks=[]) == "rejected"
+
+
+@responses.activate
 def test_complete_job_returns_reclaimed_on_409(client):
     responses.add(
         responses.PUT,

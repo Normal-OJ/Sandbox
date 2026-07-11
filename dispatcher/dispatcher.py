@@ -178,6 +178,7 @@ class Dispatcher(threading.Thread):
                 self.compile_results,
                 self.locks,
                 self.created_at,
+                self.job_ids,
         ):
             if submission_id in v:
                 del v[submission_id]
@@ -401,11 +402,18 @@ class Dispatcher(threading.Thread):
             # Don't release — let lease expire and reclaim happen on backend
             return
 
-        self.result_queue.put(JobResult(job_id=job_id,
-                                        tasks=submission_result))
+        self.result_queue.put(
+            JobResult(
+                job_id=job_id,
+                submission_id=submission_id,
+                tasks=submission_result,
+            ))
+        # State/files are cleaned by finalize() once the result reaches
+        # backend (or delivery is given up) — keeps has_capacity() honest
+        # and preserves outputs until acked.
 
-        # Clean up local state
+    def finalize(self, submission_id: str):
+        """Free all local state for a submission after its result was
+        delivered to backend or delivery was abandoned."""
         file_manager.clean_data(submission_id)
         self.release(submission_id)
-        if submission_id in self.job_ids:
-            del self.job_ids[submission_id]

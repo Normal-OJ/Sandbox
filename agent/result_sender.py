@@ -3,7 +3,7 @@ import logging
 import queue
 import threading
 from dataclasses import dataclass
-from typing import List
+from typing import Callable, List
 
 from .client import BackendClient
 
@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 class JobResult:
     """Pending result waiting to be sent to backend."""
     job_id: str
+    submission_id: str
     tasks: List[dict]
 
 
@@ -26,6 +27,7 @@ class ResultSenderThread(threading.Thread):
         runner_id: str,
         result_queue: queue.Queue,
         shutdown_event: threading.Event,
+        finalize: Callable[[str], None],
         retry_max_attempts: int,
         retry_initial_backoff_sec: float,
         retry_max_backoff_sec: float,
@@ -35,6 +37,7 @@ class ResultSenderThread(threading.Thread):
         self.runner_id = runner_id
         self.result_queue = result_queue
         self.shutdown_event = shutdown_event
+        self.finalize = finalize
         self.retry_max_attempts = retry_max_attempts
         self.retry_initial_backoff_sec = retry_initial_backoff_sec
         self.retry_max_backoff_sec = retry_max_backoff_sec
@@ -51,6 +54,10 @@ class ResultSenderThread(threading.Thread):
                 log.exception(
                     f"result delivery for {job_result.job_id} crashed: {e}")
             finally:
+                try:
+                    self.finalize(job_result.submission_id)
+                except Exception as e:
+                    log.exception(f"finalize failed: {e}")
                 self.result_queue.task_done()
 
     def _deliver_with_retry(self, jr: JobResult) -> None:
@@ -86,6 +93,10 @@ class ResultSenderThread(threading.Thread):
             if outcome == "not_found":
                 log.warning(
                     f"{jr.job_id} not found on backend; dropping result")
+                return
+            if outcome == "rejected":
+                log.error(f"{jr.job_id} rejected by backend; aborting")
+                self._abort_failed_delivery(jr, attempt)
                 return
 
     def _abort_failed_delivery(self, jr: JobResult, attempts: int) -> None:

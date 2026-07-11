@@ -11,6 +11,7 @@ Graceful shutdown on SIGTERM/SIGINT: stop polling, drain result queue, exit.
 """
 import logging
 import os
+import shutil
 import signal
 import threading
 import time
@@ -62,6 +63,12 @@ def main():
         dispatcher_config_path,
         max_concurrent_jobs=creds.max_concurrent_jobs,
     )
+    # Clear leftover submission dirs from a previous run — their results
+    # were never acked, and the corresponding jobs will be re-dispatched
+    # once their lease expires on backend.
+    for leftover in dispatcher.SUBMISSION_DIR.iterdir():
+        if leftover.is_dir():
+            shutil.rmtree(leftover, ignore_errors=True)
     dispatcher.start()
     log.info("dispatcher started")
 
@@ -84,6 +91,7 @@ def main():
         runner_id=creds.runner_id,
         result_queue=dispatcher.result_queue,
         shutdown_event=shutdown_event,
+        finalize=dispatcher.finalize,
         retry_max_attempts=agent_config.RESULT_RETRY_MAX_ATTEMPTS,
         retry_initial_backoff_sec=agent_config.
         RESULT_RETRY_INITIAL_BACKOFF_SEC,

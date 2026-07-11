@@ -53,7 +53,7 @@ class BackendClient:
         return rv.json()["data"]
 
     def complete_job(self, runner_id: str, job_id: str, tasks: list) -> str:
-        """Send result. Returns 'ok' / 'reclaimed' / 'not_found'.
+        """Send result. Returns 'ok' / 'rejected' / 'reclaimed' / 'not_found'.
 
         Raises TransientError on 5xx or network — caller should retry.
         """
@@ -61,9 +61,14 @@ class BackendClient:
             "PUT",
             f"/runners/{runner_id}/jobs/{job_id}/complete",
             json_body={"tasks": tasks},
-            expected_statuses=(204, 409, 404),
+            expected_statuses=(204, 400, 409, 404),
         )
-        return {204: "ok", 409: "reclaimed", 404: "not_found"}[rv.status_code]
+        return {
+            204: "ok",
+            400: "rejected",
+            409: "reclaimed",
+            404: "not_found",
+        }[rv.status_code]
 
     def abort_job(self, runner_id: str, job_id: str, reason: str) -> str:
         """Tell backend this runner cannot process the leased job."""

@@ -144,17 +144,42 @@ def test_on_submission_complete_pushes_to_result_queue(docker_dispatcher):
     pushed = docker_dispatcher.result_queue.get_nowait()
     assert isinstance(pushed, JobResult)
     assert pushed.job_id == "jb_1"
+    assert pushed.submission_id == "sub_1"
     assert isinstance(pushed.tasks, list)
     assert len(pushed.tasks) == 1
 
+    # on_submission_complete() no longer cleans up — do it ourselves so the
+    # test doesn't leak a "submissions/sub_1" dir across test runs.
+    docker_dispatcher.finalize("sub_1")
 
-def test_on_submission_complete_releases_state_after_push(docker_dispatcher):
-    """After completion, submission state should be cleared."""
-    from agent.result_sender import JobResult
 
+def test_on_submission_complete_keeps_state_until_finalize(docker_dispatcher):
+    """State/files must survive on_submission_complete() — only finalize()
+    (called once delivery is acked or abandoned) may clean them up."""
     _setup_fake_submission(docker_dispatcher, "sub_2", "jb_2")
     docker_dispatcher.on_submission_complete("sub_2")
 
-    # State cleaned up
+    # Nothing cleaned up yet — result was only pushed to result_queue
+    assert "sub_2" in docker_dispatcher.result
+    assert "sub_2" in docker_dispatcher.job_ids
+
+    docker_dispatcher.finalize("sub_2")
+
+    # finalize() clears state
     assert "sub_2" not in docker_dispatcher.result
     assert "sub_2" not in docker_dispatcher.job_ids
+
+
+def test_release_clears_job_ids(docker_dispatcher, submission_generator):
+    """release() must also drop the job_ids entry — otherwise a submission
+    released on an error path (queue.Full, prepare failure) leaks forever."""
+    submission_ids = list(submission_generator.submission_ids.keys())
+    assert submission_ids
+    sub_id = submission_ids[0]
+
+    docker_dispatcher.handle(submission_id=sub_id, job_id="jb_release")
+    assert docker_dispatcher.job_ids.get(sub_id) == "jb_release"
+
+    docker_dispatcher.release(sub_id)
+
+    assert sub_id not in docker_dispatcher.job_ids
