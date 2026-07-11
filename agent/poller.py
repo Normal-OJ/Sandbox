@@ -83,8 +83,7 @@ class PollerThread(threading.Thread):
                 continue
 
             try:
-                prepare_submission_dir_for_job(self.dispatcher, job,
-                                               self.client)
+                self._prepare_with_retry(job)
                 self.dispatcher.handle(
                     submission_id=job["submission_id"],
                     job_id=job["job_id"],
@@ -94,8 +93,25 @@ class PollerThread(threading.Thread):
             except Exception as e:
                 log.exception(
                     f"failed to dispatch job {job.get('job_id')}: {e}")
-                if self._abort_with_retry(job["job_id"], str(e)):
-                    self.shutdown_event.wait(timeout=self.poll_interval_sec)
+                self._abort_with_retry(job["job_id"], str(e))
+                self.shutdown_event.wait(timeout=self.poll_interval_sec)
+
+    def _prepare_with_retry(self, job: dict) -> None:
+        backoff = self.poll_interval_sec
+        last_exc: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                prepare_submission_dir_for_job(self.dispatcher, job,
+                                               self.client)
+                return
+            except Exception as e:
+                last_exc = e
+                if attempt < 3:
+                    log.warning(f"prepare attempt {attempt} for "
+                                f"{job['job_id']} failed: {e}")
+                    self.shutdown_event.wait(timeout=backoff)
+                    backoff = min(backoff * 2, 30.0)
+        raise last_exc
 
     def _abort_with_retry(self, job_id: str, reason: str) -> bool:
         backoff = self.poll_interval_sec

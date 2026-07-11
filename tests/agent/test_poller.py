@@ -165,6 +165,93 @@ def test_poller_swallows_transient_errors():
     assert client.next_job.call_count >= 2
 
 
+def test_prepare_retries_then_succeeds():
+    """Transient prepare failures should be retried, not counted as a dispatch failure."""
+    client = MagicMock(spec=BackendClient)
+    job_payload = {
+        "job_id": "jb_1",
+        "submission_id": "sub_1",
+        "problem_id": 42,
+        "language": 0,
+        "code_url": "http://minio/code.zip",
+        "checker": "",
+        "tasks": [],
+    }
+    job_iter = iter([job_payload])
+    client.next_job.side_effect = lambda *a, **kw: next(job_iter, None)
+    dispatcher = _make_dispatcher()
+    shutdown = threading.Event()
+
+    with patch(
+            "agent.poller.prepare_submission_dir_for_job",
+            side_effect=[
+                BackendClient.TransientError("first"),
+                BackendClient.TransientError("second"),
+                None,
+            ],
+    ) as prepare:
+        poller = PollerThread(
+            client=client,
+            runner_id="rn_1",
+            dispatcher=dispatcher,
+            poll_interval_sec=0.01,
+            shutdown_event=shutdown,
+        )
+        poller.start()
+        time.sleep(0.3)
+        shutdown.set()
+        poller.join(timeout=1)
+
+    assert prepare.call_count == 3
+    dispatcher.handle.assert_called_once_with(
+        submission_id="sub_1",
+        job_id="jb_1",
+    )
+    client.abort_job.assert_not_called()
+
+
+def test_prepare_exhausts_retries_then_aborts():
+    """After 3 failed prepare attempts, the job is aborted instead of dispatched."""
+    client = MagicMock(spec=BackendClient)
+    job_payload = {
+        "job_id": "jb_1",
+        "submission_id": "sub_1",
+        "problem_id": 42,
+        "language": 0,
+        "code_url": "http://minio/code.zip",
+        "checker": "",
+        "tasks": [],
+    }
+    job_iter = iter([job_payload])
+    client.next_job.side_effect = lambda *a, **kw: next(job_iter, None)
+    dispatcher = _make_dispatcher()
+    shutdown = threading.Event()
+
+    with patch(
+            "agent.poller.prepare_submission_dir_for_job",
+            side_effect=RuntimeError("download failed"),
+    ) as prepare:
+        poller = PollerThread(
+            client=client,
+            runner_id="rn_1",
+            dispatcher=dispatcher,
+            poll_interval_sec=0.01,
+            shutdown_event=shutdown,
+        )
+        poller.start()
+        time.sleep(0.3)
+        shutdown.set()
+        poller.join(timeout=1)
+
+    assert prepare.call_count == 3
+    dispatcher.handle.assert_not_called()
+    client.abort_job.assert_called_once_with(
+        runner_id="rn_1",
+        job_id="jb_1",
+        reason="download failed",
+    )
+
+
 def test_poller_retries_abort_on_transient_errors():
     client = MagicMock(spec=BackendClient)
     client.abort_job.side_effect = [
