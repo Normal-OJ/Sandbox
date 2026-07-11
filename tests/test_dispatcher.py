@@ -58,6 +58,14 @@ def test_dispatcher_has_capacity_returns_true_when_queue_empty(
     assert docker_dispatcher.has_capacity() is True
 
 
+def test_dispatcher_has_capacity_respects_active_submission_limit(
+        docker_dispatcher):
+    docker_dispatcher.max_concurrent_jobs = 1
+    docker_dispatcher.result["sub_1"] = (None, {})
+
+    assert docker_dispatcher.has_capacity() is False
+
+
 def test_dispatcher_exposes_result_queue(docker_dispatcher):
     """Dispatcher should expose a result_queue that result_sender drains."""
     assert isinstance(docker_dispatcher.result_queue, queue.Queue)

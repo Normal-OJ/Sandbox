@@ -71,8 +71,8 @@ class PollerThread(threading.Thread):
                 continue
             except BackendClient.AuthError as e:
                 log.error(f"next_job auth failed: {e}")
-                self.shutdown_event.wait(timeout=self.poll_interval_sec)
-                continue
+                self.shutdown_event.set()
+                break
             except Exception as e:
                 log.warning(f"next_job unexpected error: {e}")
                 self.shutdown_event.wait(timeout=self.poll_interval_sec)
@@ -94,13 +94,31 @@ class PollerThread(threading.Thread):
             except Exception as e:
                 log.exception(
                     f"failed to dispatch job {job.get('job_id')}: {e}")
-                try:
-                    self.client.abort_job(
-                        runner_id=self.runner_id,
-                        job_id=job["job_id"],
-                        reason=str(e),
+                if self._abort_with_retry(job["job_id"], str(e)):
+                    self.shutdown_event.wait(timeout=self.poll_interval_sec)
+
+    def _abort_with_retry(self, job_id: str, reason: str) -> bool:
+        backoff = self.poll_interval_sec
+        for attempt in range(1, 4):
+            try:
+                outcome = self.client.abort_job(
+                    runner_id=self.runner_id,
+                    job_id=job_id,
+                    reason=reason,
+                )
+            except BackendClient.AuthError as e:
+                log.error(f"abort_job {job_id} auth failed: {e}")
+                return False
+            except BackendClient.TransientError as e:
+                if attempt == 3:
+                    log.error(
+                        f"abort_job {job_id} failed after {attempt} attempts: {e}"
                     )
-                except Exception as abort_error:
-                    log.warning(
-                        f"failed to abort job {job.get('job_id')}: {abort_error}"
-                    )
+                    return False
+                log.warning(
+                    f"abort_job {job_id} attempt {attempt} failed: {e}")
+                self.shutdown_event.wait(timeout=backoff)
+                backoff = min(backoff * 2, 30.0)
+                continue
+            log.warning(f"aborted {job_id} after prepare failure: {outcome}")
+            return True

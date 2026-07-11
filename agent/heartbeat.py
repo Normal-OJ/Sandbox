@@ -30,9 +30,9 @@ class HeartbeatThread(threading.Thread):
             except BackendClient.TransientError as e:
                 log.warning(f"heartbeat failed (transient): {e}")
             except BackendClient.AuthError as e:
-                # Auth fail means the backend forgot us (e.g., Redis loss).
-                # Caller will need to re-register; for now just log.
                 log.error(f"heartbeat auth failed: {e}")
+                self.shutdown_event.set()
+                break
             except Exception as e:  # defensive — never let thread die
                 log.exception(f"heartbeat unexpected error: {e}")
             # Wait, but break early on shutdown

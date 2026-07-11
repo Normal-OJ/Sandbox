@@ -66,3 +66,22 @@ def test_heartbeat_stops_promptly_on_shutdown():
     shutdown.set()
     hb.join(timeout=0.5)
     assert not hb.is_alive(), "heartbeat thread should exit promptly"
+
+
+def test_heartbeat_auth_error_triggers_shutdown():
+    client = MagicMock(spec=BackendClient)
+    client.heartbeat.side_effect = BackendClient.AuthError("forgot runner")
+    shutdown = threading.Event()
+    hb = HeartbeatThread(
+        client=client,
+        runner_id="rn_1",
+        interval_sec=10.0,
+        shutdown_event=shutdown,
+    )
+
+    hb.start()
+    hb.join(timeout=0.5)
+
+    assert shutdown.is_set()
+    assert not hb.is_alive()
+    client.heartbeat.assert_called_once_with(runner_id="rn_1")

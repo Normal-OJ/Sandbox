@@ -21,6 +21,7 @@ class Dispatcher(threading.Thread):
         self,
         dispatcher_config='.config/dispatcher.json',
         submission_config='.config/submission.json',
+        max_concurrent_jobs=8,
     ):
         super().__init__()
         self.testing = False
@@ -37,6 +38,7 @@ class Dispatcher(threading.Thread):
         # type Queue[Tuple[submission_id, task_no]]
         self.MAX_TASK_COUNT = d_config.get('QUEUE_SIZE', 16)
         self.queue = queue.Queue(self.MAX_TASK_COUNT)
+        self.max_concurrent_jobs = max_concurrent_jobs
         # task result
         # type: Dict[submission_id, Tuple[submission_info, List[result]]]
         self.result = {}
@@ -67,7 +69,10 @@ class Dispatcher(threading.Thread):
 
         Leaves 30% headroom — when queue gets near full, stop pulling new work.
         """
-        return self.queue.qsize() < int(self.MAX_TASK_COUNT * 0.7)
+        has_submission_slot = len(self.result) < self.max_concurrent_jobs
+        has_queue_headroom = self.queue.qsize() < int(self.MAX_TASK_COUNT *
+                                                      0.7)
+        return has_submission_slot and has_queue_headroom
 
     def compile_need(self, lang: Language):
         return lang in {Language.C, Language.CPP}

@@ -163,3 +163,27 @@ def test_poller_swallows_transient_errors():
 
     # Despite first call failing, subsequent polls happen
     assert client.next_job.call_count >= 2
+
+
+def test_poller_retries_abort_on_transient_errors():
+    client = MagicMock(spec=BackendClient)
+    client.abort_job.side_effect = [
+        BackendClient.TransientError("first"),
+        BackendClient.TransientError("second"),
+        "requeued",
+    ]
+    poller = PollerThread(
+        client=client,
+        runner_id="rn_1",
+        dispatcher=_make_dispatcher(),
+        poll_interval_sec=0.001,
+        shutdown_event=threading.Event(),
+    )
+
+    assert poller._abort_with_retry("jb_1", "prepare failed") is True
+    assert client.abort_job.call_count == 3
+    client.abort_job.assert_called_with(
+        runner_id="rn_1",
+        job_id="jb_1",
+        reason="prepare failed",
+    )

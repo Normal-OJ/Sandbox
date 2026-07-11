@@ -19,7 +19,7 @@ from agent import config as agent_config
 from agent.client import BackendClient
 from agent.heartbeat import HeartbeatThread
 from agent.poller import PollerThread
-from agent.registration import register_runner
+from agent.registration import register_runner_with_retry
 from agent.result_sender import ResultSenderThread
 from dispatcher import testdata as dispatcher_testdata
 from dispatcher.dispatcher import Dispatcher
@@ -44,7 +44,7 @@ def main():
 
     # 1. Register
     bootstrap_client = BackendClient()  # no token yet
-    creds = register_runner(
+    creds = register_runner_with_retry(
         client=bootstrap_client,
         name=agent_config.RUNNER_NAME,
         registration_token=agent_config.RUNNER_REGISTRATION_TOKEN,
@@ -58,7 +58,10 @@ def main():
     # 3. Start dispatcher (existing)
     dispatcher_config_path = os.getenv("DISPATCHER_CONFIG",
                                        ".config/dispatcher.json.example")
-    dispatcher = Dispatcher(dispatcher_config_path)
+    dispatcher = Dispatcher(
+        dispatcher_config_path,
+        max_concurrent_jobs=creds.max_concurrent_jobs,
+    )
     dispatcher.start()
     log.info("dispatcher started")
 
@@ -104,6 +107,7 @@ def main():
         time.sleep(1)
 
     # 6. Graceful drain — give result_sender up to 60s to flush
+    dispatcher.stop()
     log.info("waiting for in-flight work to complete (max 60s)")
     sender.join(timeout=60)
     log.info("runner agent exiting")

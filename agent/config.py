@@ -6,10 +6,21 @@ from pathlib import Path
 BACKEND_URL: str = os.getenv("BACKEND_URL", "http://web:8080")
 
 # Shared registration secret (must match backend's RUNNER_REGISTRATION_TOKEN).
-RUNNER_REGISTRATION_TOKEN: str = os.getenv(
-    "RUNNER_REGISTRATION_TOKEN",
-    "dev-only-registration-token-change-me",
-)
+DEV_REGISTRATION_TOKEN = "dev-only-registration-token-change-me"
+
+
+def _load_registration_token() -> str:
+    token = os.getenv("RUNNER_REGISTRATION_TOKEN", DEV_REGISTRATION_TOKEN)
+    require_secure = os.getenv("RUNNER_REQUIRE_SECURE_TOKEN",
+                               "").lower() in {"1", "true", "yes", "on"}
+    if require_secure and (not token.strip()
+                           or token.strip() == DEV_REGISTRATION_TOKEN):
+        raise RuntimeError(
+            "RUNNER_REGISTRATION_TOKEN must be set to a non-default value")
+    return token
+
+
+RUNNER_REGISTRATION_TOKEN: str = _load_registration_token()
 
 # Display name shown in admin/listing. Defaults to hostname.
 RUNNER_NAME: str = os.getenv("RUNNER_NAME", os.uname().nodename)

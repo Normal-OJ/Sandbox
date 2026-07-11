@@ -68,6 +68,7 @@ class ResultSenderThread(threading.Thread):
                 if attempt == self.retry_max_attempts:
                     log.error(
                         f"giving up on {jr.job_id} after {attempt} attempts")
+                    self._abort_failed_delivery(jr, attempt)
                     return
                 self.shutdown_event.wait(timeout=backoff)
                 backoff = min(backoff * 2, self.retry_max_backoff_sec)
@@ -86,3 +87,31 @@ class ResultSenderThread(threading.Thread):
                 log.warning(
                     f"{jr.job_id} not found on backend; dropping result")
                 return
+
+    def _abort_failed_delivery(self, jr: JobResult, attempts: int) -> None:
+        reason = f"result delivery failed after {attempts} attempts"
+        backoff = self.retry_initial_backoff_sec
+        for attempt in range(1, 4):
+            try:
+                outcome = self.client.abort_job(
+                    runner_id=self.runner_id,
+                    job_id=jr.job_id,
+                    reason=reason,
+                )
+            except BackendClient.AuthError as e:
+                log.error(f"abort_job {jr.job_id} auth failed: {e}")
+                return
+            except BackendClient.TransientError as e:
+                if attempt == 3:
+                    log.error(
+                        f"abort_job {jr.job_id} failed after {attempt} attempts: {e}"
+                    )
+                    return
+                log.warning(
+                    f"abort_job {jr.job_id} attempt {attempt} failed: {e}")
+                self.shutdown_event.wait(timeout=backoff)
+                backoff = min(backoff * 2, self.retry_max_backoff_sec)
+                continue
+            log.warning(
+                f"aborted {jr.job_id} after failed delivery: {outcome}")
+            return
