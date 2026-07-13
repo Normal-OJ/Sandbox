@@ -10,20 +10,20 @@ from .utils import logger
 
 def extract(
     root_dir: Path,
-    submission_id: str,
+    job_id: str,
     meta: Meta,
     source,
     testdata: Path,
 ):
-    submission_dir = root_dir / submission_id
-    submission_dir.mkdir()
-    (submission_dir / 'meta.json').write_text(meta.json())
-    logger().debug(f'{submission_id}\'s meta: {meta}')
+    job_dir = root_dir / job_id
+    job_dir.mkdir()
+    (job_dir / 'meta.json').write_text(meta.json())
+    logger().debug(f'{job_id}\'s meta: {meta}')
     for i, task in enumerate(meta.tasks):
         if task.caseCount == 0:
-            logger().warning(f'empty task. [id={submission_id}/{i:02d}]')
+            logger().warning(f'empty task. [id={job_id}/{i:02d}]')
     # extract source code
-    code_dir = submission_dir / 'src'
+    code_dir = job_dir / 'src'
     code_dir.mkdir()
     with ZipFile(source) as zf:
         zf.extractall(code_dir)
@@ -39,7 +39,7 @@ def extract(
         if _file.suffix != language_type:
             raise ValueError('data type is not match')
     # copy testdata
-    testcase_dir = submission_dir / 'testcase'
+    testcase_dir = job_dir / 'testcase'
     shutil.copytree(testdata, testcase_dir)
     # move chaos files to src directory
     chaos_dir = testcase_dir / 'chaos'
@@ -51,12 +51,12 @@ def extract(
         os.rmdir(chaos_dir)
 
 
-def clean_data(submission_id):
-    submission_dir = config.SUBMISSION_DIR / submission_id
-    shutil.rmtree(submission_dir)
+def clean_data(job_id):
+    job_dir = config.SUBMISSION_DIR / job_id
+    shutil.rmtree(job_dir)
 
 
-def backup_data(submission_id):
-    submission_dir = config.SUBMISSION_DIR / submission_id
-    dest = config.SUBMISSION_BACKUP_DIR / f'{submission_id}_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
-    shutil.move(submission_dir, dest)
+def backup_data(job_id):
+    job_dir = config.SUBMISSION_DIR / job_id
+    dest = config.SUBMISSION_BACKUP_DIR / f'{job_id}_{datetime.now().strftime("%Y-%m-%d_%H:%M:%S")}'
+    shutil.move(job_dir, dest)

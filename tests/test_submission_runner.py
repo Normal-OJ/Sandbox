@@ -31,14 +31,14 @@ def test_strip_func(TestSubmissionRunner, stdout, answer, excepted):
 
 
 def test_c_tle(submission_generator, TestSubmissionRunner):
-    submission_id = [
+    job_id = [
         _id for _id, pn in submission_generator.submission_ids.items()
         if pn == 'c-TLE'
     ][0]
-    submission_path = submission_generator.get_submission_path(submission_id)
+    submission_path = submission_generator.get_submission_path(job_id)
 
     runner = TestSubmissionRunner(
-        submission_id=submission_id,
+        job_id=job_id,
         time_limit=1000,
         mem_limit=32768,
         testdata_input_path=submission_path + '/testcase/0000.in',
@@ -53,14 +53,14 @@ def test_c_tle(submission_generator, TestSubmissionRunner):
 
 
 def test_non_strict_diff(submission_generator, TestSubmissionRunner):
-    submission_id = [
+    job_id = [
         _id for _id, pn in submission_generator.submission_ids.items()
         if pn == 'space-before-lf'
     ][0]
-    submission_path = submission_generator.get_submission_path(submission_id)
+    submission_path = submission_generator.get_submission_path(job_id)
 
     runner = TestSubmissionRunner(
-        submission_id=submission_id,
+        job_id=job_id,
         time_limit=1000,
         mem_limit=32768,
         testdata_input_path=submission_path + '/testcase/0000.in',
