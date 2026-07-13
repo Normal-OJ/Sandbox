@@ -1,14 +1,14 @@
 import json
 import dataclasses
 from typing import Optional
-from runner.sandbox import Sandbox, JudgeError
+from executor.sandbox import Sandbox, JudgeError
 
 
 class SubmissionRunner:
 
     def __init__(
         self,
-        submission_id: str,
+        job_id: str,
         time_limit: int,  # sec.
         mem_limit: int,  # KB
         testdata_input_path: str,
@@ -22,7 +22,7 @@ class SubmissionRunner:
         self.lang = lang
         self.special_judge = special_judge
         # required
-        self.submission_id = submission_id
+        self.job_id = job_id
         self.time_limit = time_limit
         self.mem_limit = mem_limit
         self.testdata_input_path = testdata_input_path  # absoulte path str
@@ -40,7 +40,7 @@ class SubmissionRunner:
                 time_limit=20000,  # 20s
                 mem_limit=1048576,  # 1GB
                 image=self.image[self.lang],
-                src_dir=f'{self.working_dir}/{self.submission_id}/src',
+                src_dir=f'{self.working_dir}/{self.job_id}/src',
                 lang_id=self.lang_id[self.lang],
                 compile_need=True,
             ).run()
@@ -58,7 +58,7 @@ class SubmissionRunner:
                 time_limit=self.time_limit,
                 mem_limit=self.mem_limit,
                 image=self.image[self.lang],
-                src_dir=f'{self.working_dir}/{self.submission_id}/src',
+                src_dir=f'{self.working_dir}/{self.job_id}/src',
                 lang_id=self.lang_id[self.lang],
                 compile_need=False,
                 stdin_path=self.testdata_input_path,

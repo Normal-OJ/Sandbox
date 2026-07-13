@@ -1,7 +1,7 @@
 import pytest
 import pathlib
 from dispatcher.dispatcher import Dispatcher
-from runner.submission import SubmissionRunner
+from executor.submission import SubmissionRunner
 from tests.submission_generator import SubmissionGenerator
 
 TEST_CONFIG_PATH = '.config/dispatcher.test.json'
@@ -35,7 +35,7 @@ def TestSubmissionRunner(tmp_path):
 
         def __init__(
             self,
-            submission_id,
+            job_id,
             time_limit,
             mem_limit,
             testdata_input_path,
@@ -44,7 +44,7 @@ def TestSubmissionRunner(tmp_path):
             lang=None,
         ):
             super().__init__(
-                submission_id,
+                job_id,
                 time_limit,
                 mem_limit,
                 testdata_input_path,

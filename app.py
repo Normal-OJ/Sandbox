@@ -5,6 +5,7 @@ import secrets
 from flask import Flask, request, jsonify
 from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
+from dispatcher import file_manager
 from dispatcher.testdata import (
     ensure_testdata,
     get_problem_meta,
@@ -44,9 +45,9 @@ def submit(submission_id: str):
     ensure_testdata(problem_id)
     language = Language(request.form.get('language', type=int))
     try:
-        DISPATCHER.prepare_submission_dir(
+        file_manager.extract(
             root_dir=SUBMISSION_DIR,
-            submission_id=submission_id,
+            job_id=submission_id,
             meta=get_problem_meta(problem_id, language),
             source=request.files['src'],
             testdata=get_problem_root(problem_id),
@@ -55,7 +56,7 @@ def submit(submission_id: str):
         return str(e), 400
     logger.debug(f'send submission {submission_id} to dispatcher')
     try:
-        DISPATCHER.handle(submission_id)
+        DISPATCHER.handle(job_id=submission_id, submission_id=submission_id)
     except queue.Full:
         return jsonify({
             'status': 'err',
