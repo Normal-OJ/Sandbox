@@ -1,5 +1,6 @@
 import json
 import dataclasses
+import secrets
 from typing import Optional
 from executor.sandbox import Sandbox, JudgeError
 
@@ -15,12 +16,14 @@ class SubmissionRunner:
         testdata_output_path: str,
         special_judge: bool = False,
         lang: Optional[str] = None,
+        case_no: Optional[str] = None,
     ):
         # config file
         with open('.config/submission.json') as f:
             config = json.load(f)
         self.lang = lang
         self.special_judge = special_judge
+        self.case_no = case_no
         # required
         self.job_id = job_id
         self.time_limit = time_limit
@@ -33,6 +36,11 @@ class SubmissionRunner:
         self.lang_id = config['lang_id']
         self.image = config['image']
 
+    def container_name(self, phase: str) -> str:
+        # random suffix: a reclaimed job can rerun while a zombie container
+        # from a previous attempt is still alive; a fixed name would collide
+        return f'{self.job_id}-{phase}-{secrets.token_hex(3)}'
+
     def compile(self):
         try:
             # compile must be done in 20 seconds
@@ -43,6 +51,7 @@ class SubmissionRunner:
                 src_dir=f'{self.working_dir}/{self.job_id}/src',
                 lang_id=self.lang_id[self.lang],
                 compile_need=True,
+                name=self.container_name('compile'),
             ).run()
         except JudgeError:
             return {'Status': 'JE'}
@@ -62,6 +71,7 @@ class SubmissionRunner:
                 lang_id=self.lang_id[self.lang],
                 compile_need=False,
                 stdin_path=self.testdata_input_path,
+                name=self.container_name(self.case_no or 'run'),
             ).run()
         except JudgeError:
             return {'Status': 'JE'}

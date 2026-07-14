@@ -1,4 +1,5 @@
 import json
+import re
 import pytest
 
 
@@ -28,6 +29,23 @@ import pytest
 def test_strip_func(TestSubmissionRunner, stdout, answer, excepted):
     assert (TestSubmissionRunner.strip(stdout) == TestSubmissionRunner.strip(
         answer)) is excepted
+
+
+def test_container_name_keyed_by_job_id(TestSubmissionRunner):
+    runner = TestSubmissionRunner(
+        job_id='abc123',
+        time_limit=1000,
+        mem_limit=32768,
+        testdata_input_path='',
+        testdata_output_path='',
+        lang='python3',
+    )
+    name = runner.container_name('0001')
+    assert name.startswith('abc123-0001-')
+    # valid docker container name
+    assert re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]+', name)
+    # suffix keeps duplicated runs of the same job/case from colliding
+    assert name != runner.container_name('0001')
 
 
 def test_c_tle(submission_generator, TestSubmissionRunner):

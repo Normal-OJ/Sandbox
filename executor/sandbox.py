@@ -35,6 +35,7 @@ class Sandbox:
         lang_id: str,
         compile_need: bool,
         stdin_path: Optional[str] = None,
+        name: Optional[str] = None,
     ):
         with open('.config/submission.json') as f:
             config = json.load(f)
@@ -45,6 +46,7 @@ class Sandbox:
         self.stdin_path = stdin_path
         self.lang_id = lang_id
         self.compile_need = compile_need
+        self.name = name
         self.client = docker.APIClient(base_url=config['docker_url'])
 
     def run(self):
@@ -93,6 +95,7 @@ class Sandbox:
 
         container = self.client.create_container(
             image=self.image,
+            name=self.name,
             command=command_sandbox,
             volumes=volume,
             network_disabled=True,
