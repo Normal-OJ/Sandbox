@@ -256,6 +256,7 @@ class Dispatcher(threading.Thread):
             case_in_path,
             case_out_path,
             lang=lang,
+            case_no=case_no,
         )
         res = self.extract_compile_result(job_id, lang)
         # Execute if compile successfully
