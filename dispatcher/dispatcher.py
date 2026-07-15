@@ -303,7 +303,8 @@ class Dispatcher(threading.Thread):
     ):
         # if id not exists
         if job_id not in self.result:
-            raise JobIdNotFoundError(f'Unexisted id {job_id} recieved')
+            raise JobIdNotFoundError(
+                f'received case result for unknown job {job_id}')
         # update case result
         _, results = self.result[job_id]
         if case_no not in results:
