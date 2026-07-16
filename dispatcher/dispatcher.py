@@ -8,7 +8,7 @@ import queue
 import tempfile
 from datetime import datetime
 
-from executor.submission import SubmissionRunner
+from executor.submission import SubmissionExecutor
 from . import job, file_manager, config
 from .exception import *
 from .meta import Meta
@@ -51,10 +51,11 @@ class Dispatcher(threading.Thread):
         self.MAX_CONTAINER_SIZE = d_config.get('MAX_CONTAINER_NUMBER', 8)
         self.container_count_lock = threading.Lock()
         self.container_count = 0
-        # read cwd from submission runner config
+        # read cwd from submission executor config
         with open(submission_config) as f:
             s_config = json.load(f)
-            self.submission_runner_cwd = pathlib.Path(s_config['working_dir'])
+            self.submission_executor_cwd = pathlib.Path(
+                s_config['working_dir'])
         self.timeout = 300
         self.created_at = {}
 
@@ -187,12 +188,12 @@ class Dispatcher(threading.Thread):
                 base_path = self.SUBMISSION_DIR / job_id / 'testcase'
                 out_path = str((base_path / f'{case_no}.out').absolute())
                 # input path should be the host path
-                base_path = self.submission_runner_cwd / job_id / 'testcase'
+                base_path = self.submission_executor_cwd / job_id / 'testcase'
                 in_path = str((base_path / f'{case_no}.in').absolute())
                 # debug log
                 logger().debug('in path: ' + in_path)
                 logger().debug('out path: ' + out_path)
-                # assign a new runner
+                # assign a new executor
                 threading.Thread(
                     target=self.create_container,
                     args=(
@@ -227,7 +228,7 @@ class Dispatcher(threading.Thread):
         # compile this job. don't forget to acquire the lock
         with self.compile_locks[job_id]:
             logger().info(f'start compiling {job_id}')
-            res = SubmissionRunner(
+            res = SubmissionExecutor(
                 job_id=job_id,
                 time_limit=-1,
                 mem_limit=-1,
@@ -249,7 +250,7 @@ class Dispatcher(threading.Thread):
         lang: Language,
     ):
         lang = ['c11', 'cpp17', 'python3'][int(lang)]
-        runner = SubmissionRunner(
+        executor = SubmissionExecutor(
             job_id,
             time_limit,
             mem_limit,
@@ -263,7 +264,7 @@ class Dispatcher(threading.Thread):
         if res['Status'] != 'CE':
             try:
                 self.inc_container()
-                res = runner.run()
+                res = executor.run()
             finally:
                 self.dec_container()
         logger().info(f'finish task {job_id}/{case_no}')
