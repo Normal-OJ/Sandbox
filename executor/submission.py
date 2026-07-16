@@ -5,7 +5,7 @@ from typing import Optional
 from executor.sandbox import Sandbox, JudgeError
 
 
-class SubmissionRunner:
+class SubmissionExecutor:
 
     def __init__(
         self,
