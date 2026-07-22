@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 
 import requests
 
@@ -32,11 +33,16 @@ class HeartbeatThread(threading.Thread):
 
     def run(self):
         while not self._stop_event.is_set():
+            started = time.monotonic()
             fatal = self._beat()
             if fatal:
                 break
+            # Fixed cadence: subtract the time the beat took so a slow or
+            # timed-out request cannot push the next beat past the lease
+            # budget (15s interval vs 30s TTL allows exactly one miss).
             # Interruptible wait so stop() takes effect immediately.
-            self._stop_event.wait(self._interval_sec)
+            elapsed = time.monotonic() - started
+            self._stop_event.wait(max(0.0, self._interval_sec - elapsed))
 
     def _beat(self):
         """Send one heartbeat. Returns True iff fail-fast was triggered."""
