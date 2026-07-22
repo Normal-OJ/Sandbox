@@ -182,6 +182,74 @@ def test_real_thread_fails_fast_on_two_401():
     assert not hb.is_alive()
 
 
+class FakeClock:
+    """Stands in for the time module; only monotonic() is used."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+
+class RecordingStopEvent:
+    """Duck-types threading.Event; stops the loop after the first wait."""
+
+    def __init__(self):
+        self.waits = []
+        self._stopped = False
+
+    def is_set(self):
+        return self._stopped
+
+    def wait(self, timeout=None):
+        self.waits.append(timeout)
+        self._stopped = True
+        return False
+
+    def set(self):
+        self._stopped = True
+
+
+class SlowClient:
+    """heartbeat() advances the fake clock to simulate a slow request."""
+
+    def __init__(self, clock, cost_sec):
+        self._clock = clock
+        self._cost = cost_sec
+
+    def heartbeat(self, identity, active_job_ids):
+        self._clock.now += self._cost
+
+
+def run_one_cycle(monkeypatch, beat_cost_sec, interval_sec):
+    clock = FakeClock()
+    monkeypatch.setattr('runner.heartbeat.time', clock)
+    hb = HeartbeatThread(
+        SlowClient(clock, beat_cost_sec),
+        make_identity(),
+        ActiveJobTracker(),
+        on_fatal=FatalFlag(),
+        interval_sec=interval_sec,
+    )
+    stop_event = RecordingStopEvent()
+    hb._stop_event = stop_event
+    hb.run()
+    return stop_event.waits
+
+
+def test_wait_subtracts_beat_duration(monkeypatch):
+    # A beat that takes 10s must shrink the following wait to 5s so the
+    # next beat stays on the fixed 15s cadence (lease-renewal budget).
+    waits = run_one_cycle(monkeypatch, beat_cost_sec=10, interval_sec=15)
+    assert waits == [5]
+
+
+def test_wait_clamps_to_zero_when_beat_exceeds_interval(monkeypatch):
+    waits = run_one_cycle(monkeypatch, beat_cost_sec=40, interval_sec=15)
+    assert waits == [0.0]
+
+
 def test_default_interval_comes_from_identity_config():
     client = ScriptedClient([None])
     identity = RunnerIdentity('rn_x', 'rk_tok', RunnerConfig(42, 3, 8))
