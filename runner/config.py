@@ -1,7 +1,9 @@
 import os
 import socket
 
-# Backend base URL (unified name; replaces the legacy BACKEND_API).
+# Backend base URL for the pull-based runner API. Coexists with the legacy
+# BACKEND_API (dispatcher/config.py) until the keystone slice removes the
+# old push path.
 BACKEND_URL = os.getenv(
     'BACKEND_URL',
     'http://web:8080',
