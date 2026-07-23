@@ -92,15 +92,30 @@ class ResultSenderThread(threading.Thread):
                 logger.exception('result sender failed to process %r', item)
 
     def _process(self, item):
-        job_id = item.job_id
         if isinstance(item, CompleteRequest):
-            outcome = self._send_complete(job_id, item.tasks)
+            self._process_complete(item)
         elif isinstance(item, AbortRequest):
-            outcome = self._send_abort(job_id, item.reason)
+            self._process_abort(item.job_id, item.reason)
         else:
             logger.error('result sender got unknown item %r', item)
-            return
 
+    def _process_complete(self, item):
+        job_id = item.job_id
+        outcome, status = self._send_with_retry(
+            'complete',
+            lambda: self._client.complete(self._identity, job_id, item.tasks),
+            terminal_statuses=(409, 404, 400),
+        )
+        if outcome == 'terminal' and status == 400:
+            # Backend rejected the payload: requeue via abort so the job can
+            # converge (spec §7.5, INV5). Keep the job dir as evidence of
+            # what the backend refused.
+            logger.warning(
+                'complete for %s rejected with 400; aborting as rejected',
+                job_id,
+            )
+            self._process_abort(job_id, 'rejected', preserve_evidence=True)
+            return
         try:
             if outcome == 'exhausted':
                 # Keep local evidence; lease-expiry reclaim is the safety net.
@@ -113,21 +128,22 @@ class ResultSenderThread(threading.Thread):
             # capacity forever.
             self._tracker.remove(job_id)
 
-    def _send_complete(self, job_id, tasks):
-        outcome, status = self._send_with_retry(
-            'complete',
-            lambda: self._client.complete(self._identity, job_id, tasks),
-            terminal_statuses=(409, 404, 400),
-        )
-        if outcome == 'terminal' and status == 400:
-            # Backend rejected the payload: requeue via abort so the job can
-            # converge (spec §7.5, INV5).
-            logger.warning(
-                'complete for %s rejected with 400; aborting as rejected',
-                job_id,
-            )
-            return self._send_abort(job_id, 'rejected')
-        return outcome
+    def _process_abort(self, job_id, reason, preserve_evidence=False):
+        # Finalize local state BEFORE the send: the moment the backend
+        # accepts an abort it requeues the job, and this same runner may
+        # claim it again immediately -- no stale dir or tracker entry may
+        # survive to that point (ABA race).
+        try:
+            if preserve_evidence:
+                self._backup(job_id)
+            else:
+                self._cleanup(job_id)
+        except Exception:
+            # A failed finalize must not block the abort: an unsent abort
+            # leaves the job leased until its lease expires.
+            logger.exception('finalize before abort of %s failed', job_id)
+        self._tracker.remove(job_id)
+        self._send_abort(job_id, reason)
 
     def _send_abort(self, job_id, reason):
         outcome, _ = self._send_with_retry(
