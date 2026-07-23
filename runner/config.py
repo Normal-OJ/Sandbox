@@ -27,3 +27,10 @@ REQUEST_TIMEOUT = 10
 DEFAULT_HEARTBEAT_INTERVAL_SEC = 15
 DEFAULT_POLL_INTERVAL_SEC = 3
 DEFAULT_MAX_CONCURRENT_JOBS = 8
+
+# Local prep attempts before giving up and aborting with prep_failed (spec §10).
+PREP_MAX_ATTEMPTS = 3
+# Backoff (seconds) between prep attempts; len == PREP_MAX_ATTEMPTS - 1.
+PREP_BACKOFF_SCHEDULE = (1, 2)
+# Backoff (seconds) between complete/abort resends; len == max retries (spec §7).
+SEND_RETRY_BACKOFF_SCHEDULE = (1, 2, 4, 8, 16)
