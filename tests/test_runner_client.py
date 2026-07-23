@@ -5,6 +5,7 @@ from runner.client import (
     BackendClient,
     BackendAPIError,
     BackendAuthError,
+    JobPayload,
     RunnerIdentity,
     RunnerConfig,
 )
@@ -30,6 +31,31 @@ class RecordingSession:
 
     def post(self, url, json=None, headers=None, timeout=None):
         self.calls.append({
+            'method': 'post',
+            'url': url,
+            'json': json,
+            'headers': headers,
+            'timeout': timeout,
+        })
+        if self._exc is not None:
+            raise self._exc
+        return self._response
+
+    def get(self, url, json=None, headers=None, timeout=None):
+        self.calls.append({
+            'method': 'get',
+            'url': url,
+            'json': json,
+            'headers': headers,
+            'timeout': timeout,
+        })
+        if self._exc is not None:
+            raise self._exc
+        return self._response
+
+    def put(self, url, json=None, headers=None, timeout=None):
+        self.calls.append({
+            'method': 'put',
             'url': url,
             'json': json,
             'headers': headers,
@@ -184,3 +210,149 @@ def test_token_absent_from_identity_repr():
                               RunnerConfig(15, 3, 8))
     assert 'rk_super_secret' not in repr(identity)
     assert 'rn_abc' in repr(identity)
+
+
+def make_identity():
+    return RunnerIdentity('rn_abc', 'rk_secret', RunnerConfig(15, 3, 8))
+
+
+NEXT_JOB_BODY = {
+    'job_id':
+    'jb_1',
+    'submission_id':
+    'sub_1',
+    'problem_id':
+    42,
+    'language':
+    2,
+    'code_url':
+    'http://minio/code.zip',
+    'checker':
+    'diff',
+    'tasks': [{
+        'taskScore': 100,
+        'memoryLimit': 65536,
+        'timeLimit': 1000,
+        'caseCount': 3,
+    }],
+}
+
+
+def test_next_job_200_parses_payload():
+    session = RecordingSession(StubResponse(200, NEXT_JOB_BODY))
+    client = BackendClient('http://web:8080', session=session, timeout=10)
+    identity = make_identity()
+
+    payload = client.next_job(identity)
+
+    assert isinstance(payload, JobPayload)
+    assert payload.job_id == 'jb_1'
+    assert payload.submission_id == 'sub_1'
+    assert payload.problem_id == 42
+    assert payload.language == 2
+    assert payload.code_url == 'http://minio/code.zip'
+    assert payload.checker == 'diff'
+    assert payload.tasks == NEXT_JOB_BODY['tasks']
+
+    call = session.calls[0]
+    assert call['method'] == 'get'
+    assert call['url'] == 'http://web:8080/runners/rn_abc/next-job'
+    assert call['headers'] == {'Authorization': 'Bearer rk_secret'}
+    assert call['timeout'] == 10
+
+
+def test_next_job_normalizes_string_problem_id():
+    # The backend job hash stores fields as strings.
+    body = dict(NEXT_JOB_BODY)
+    body['problem_id'] = '42'
+    session = RecordingSession(StubResponse(200, body))
+    client = BackendClient('http://web:8080', session=session)
+
+    payload = client.next_job(make_identity())
+
+    assert payload.problem_id == 42
+
+
+def test_next_job_defaults_checker_to_none_when_absent():
+    body = dict(NEXT_JOB_BODY)
+    del body['checker']
+    session = RecordingSession(StubResponse(200, body))
+    client = BackendClient('http://web:8080', session=session)
+
+    payload = client.next_job(make_identity())
+
+    assert payload.checker is None
+
+
+def test_next_job_204_returns_none():
+    session = RecordingSession(StubResponse(204))
+    client = BackendClient('http://web:8080', session=session)
+
+    assert client.next_job(make_identity()) is None
+
+
+def test_next_job_401_raises_auth_error():
+    session = RecordingSession(StubResponse(401))
+    client = BackendClient('http://web:8080', session=session)
+
+    with pytest.raises(BackendAuthError) as excinfo:
+        client.next_job(make_identity())
+    assert excinfo.value.status_code == 401
+
+
+def test_next_job_500_raises_api_error():
+    session = RecordingSession(StubResponse(500))
+    client = BackendClient('http://web:8080', session=session)
+
+    with pytest.raises(BackendAPIError) as excinfo:
+        client.next_job(make_identity())
+    assert not isinstance(excinfo.value, BackendAuthError)
+    assert excinfo.value.status_code == 500
+
+
+def test_complete_204_sends_url_body_and_auth():
+    session = RecordingSession(StubResponse(204))
+    client = BackendClient('http://web:8080', session=session, timeout=10)
+    tasks = [{'status': 0}]
+
+    result = client.complete(make_identity(), 'jb_1', tasks)
+
+    assert result is None
+    call = session.calls[0]
+    assert call['method'] == 'put'
+    assert call['url'] == 'http://web:8080/runners/rn_abc/jobs/jb_1/complete'
+    assert call['json'] == {'tasks': tasks}
+    assert call['headers'] == {'Authorization': 'Bearer rk_secret'}
+    assert call['timeout'] == 10
+
+
+def test_complete_409_raises_api_error():
+    session = RecordingSession(StubResponse(409))
+    client = BackendClient('http://web:8080', session=session)
+
+    with pytest.raises(BackendAPIError) as excinfo:
+        client.complete(make_identity(), 'jb_1', [])
+    assert excinfo.value.status_code == 409
+
+
+def test_abort_202_sends_url_and_reason():
+    session = RecordingSession(StubResponse(202))
+    client = BackendClient('http://web:8080', session=session)
+
+    result = client.abort(make_identity(), 'jb_1', 'prep_failed')
+
+    assert result is None
+    call = session.calls[0]
+    assert call['method'] == 'put'
+    assert call['url'] == 'http://web:8080/runners/rn_abc/jobs/jb_1/abort'
+    assert call['json'] == {'reason': 'prep_failed'}
+    assert call['headers'] == {'Authorization': 'Bearer rk_secret'}
+
+
+def test_abort_404_raises_api_error():
+    session = RecordingSession(StubResponse(404))
+    client = BackendClient('http://web:8080', session=session)
+
+    with pytest.raises(BackendAPIError) as excinfo:
+        client.abort(make_identity(), 'jb_1', 'drain')
+    assert excinfo.value.status_code == 404
