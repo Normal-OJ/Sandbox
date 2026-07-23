@@ -226,7 +226,10 @@ def test_prepare_fails_all_attempts_queues_abort():
     assert tracker.snapshot() == ['jb_1']
 
 
-def test_dispatch_failure_counts_as_failed_attempt_reprepares():
+def test_dispatch_failure_aborts_without_retry():
+    # A failed handle() may have partially enqueued task entries; calling
+    # it again for the same job_id would revive them (duplicate execution),
+    # so dispatch gets exactly one shot.
     tracker = ActiveJobTracker()
     prepare = PrepareRecorder(tracker)
     dispatch = DispatchRecorder(fail_times=1, exc=queue.Full())
@@ -238,11 +241,14 @@ def test_dispatch_failure_counts_as_failed_attempt_reprepares():
     result = poller._poll_once()
 
     assert result is False
-    # dispatch failed once, so prepare was invoked again on the retry.
-    assert len(prepare.calls) == 2
-    assert len(dispatch.calls) == 2
-    assert q.empty()
-    assert sleep.slept == [1]
+    assert len(prepare.calls) == 1
+    assert len(dispatch.calls) == 1
+    assert sleep.slept == []
+    item = q.get_nowait()
+    assert isinstance(item, AbortRequest)
+    assert item.reason == 'prep_failed'
+    # Still in tracker: the sender removes it as it finalizes the abort.
+    assert tracker.snapshot() == ['jb_1']
 
 
 def test_real_thread_polls_and_stops_promptly():

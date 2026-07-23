@@ -120,7 +120,8 @@ def test_complete_404_terminal_cleanup():
     assert len(tracker) == 0
 
 
-def test_complete_400_triggers_abort_rejected_then_cleanup():
+def test_complete_400_triggers_abort_rejected_with_backup():
+    # rejected keeps the job dir as evidence of what the backend refused.
     client = ScriptedClient(
         complete_outcomes=[BackendAPIError('bad', status_code=400)],
         abort_outcomes=[None],
@@ -130,8 +131,8 @@ def test_complete_400_triggers_abort_rejected_then_cleanup():
     sender._process(CompleteRequest('jb_1', 'sub_1', []))
 
     assert client.abort_calls == [('jb_1', 'rejected')]
-    assert cleanup.calls == ['jb_1']
-    assert backup.calls == []
+    assert backup.calls == ['jb_1']
+    assert cleanup.calls == []
     assert len(tracker) == 0
 
 
@@ -151,7 +152,7 @@ def test_complete_400_then_abort_exhausts_backup():
     assert len(tracker) == 0
 
 
-def test_complete_400_then_abort_409_cleanup():
+def test_complete_400_then_abort_409_still_backed_up():
     client = ScriptedClient(
         complete_outcomes=[BackendAPIError('bad', status_code=400)],
         abort_outcomes=[BackendAPIError('conflict', status_code=409)],
@@ -161,9 +162,65 @@ def test_complete_400_then_abort_409_cleanup():
     sender._process(CompleteRequest('jb_1', 'sub_1', []))
 
     assert client.abort_calls == [('jb_1', 'rejected')]
+    assert backup.calls == ['jb_1']
+    assert cleanup.calls == []
+    assert sleep.slept == []
+    assert len(tracker) == 0
+
+
+def test_abort_finalizes_local_state_before_send():
+    # The 202 response means the backend has already requeued the job and
+    # this runner may re-claim it at once: by the time the abort request
+    # goes out, the dir must be gone and the tracker entry removed.
+    events = []
+    tracker = ActiveJobTracker()
+    tracker.add('jb_1')
+
+    class OrderClient:
+
+        def abort(self, identity, job_id, reason):
+            events.append(('abort', reason, len(tracker)))
+
+    sender = ResultSenderThread(
+        OrderClient(),
+        identity=object(),
+        tracker=tracker,
+        result_queue=queue.Queue(),
+        cleanup=lambda job_id: events.append(('cleanup', job_id)),
+        backup=lambda job_id: events.append(('backup', job_id)),
+        sleep=SleepRecorder(),
+    )
+
+    sender._process(AbortRequest('jb_1', 'sub_1', 'prep_failed'))
+
+    # cleanup first, then the send observes an already-empty tracker.
+    assert events == [('cleanup', 'jb_1'), ('abort', 'prep_failed', 0)]
+
+
+def test_abort_exhaustion_does_not_backup():
+    # The dir was already finalized before the first send attempt, so
+    # exhaustion has nothing left to back up.
+    client = ScriptedClient(abort_outcomes=[requests.ConnectionError('x')] * 6)
+    sender, tracker, cleanup, backup, sleep = build_sender(client)
+
+    sender._process(AbortRequest('jb_1', 'sub_1', 'prep_failed'))
+
     assert cleanup.calls == ['jb_1']
     assert backup.calls == []
-    assert sleep.slept == []
+    assert sleep.slept == [1, 2, 4, 8, 16]
+    assert len(tracker) == 0
+
+
+def test_finalize_failure_still_sends_abort():
+    # An unsent abort would leave the job leased until lease expiry, so a
+    # failing cleanup must not block the send (or the tracker removal).
+    client = ScriptedClient(abort_outcomes=[None])
+    sender, tracker, cleanup, backup, sleep = build_sender(client)
+    cleanup._raise_once = PermissionError('denied')
+
+    sender._process(AbortRequest('jb_1', 'sub_1', 'prep_failed'))
+
+    assert client.abort_calls == [('jb_1', 'prep_failed')]
     assert len(tracker) == 0
 
 

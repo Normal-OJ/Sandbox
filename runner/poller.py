@@ -108,22 +108,35 @@ class PollerThread(threading.Thread):
         for i in range(PREP_MAX_ATTEMPTS):
             try:
                 self._prepare(payload)
-                self._dispatch(payload.job_id, payload.submission_id)
-                return False
+                break
             except Exception as err:
-                # Heterogeneous causes: network, extract ValueError, queue.Full.
-                logger.warning(
-                    'prep/dispatch for %s failed (attempt %d/%d): %s',
-                    payload.job_id, i + 1, PREP_MAX_ATTEMPTS, err)
+                # Heterogeneous causes: network errors, extract ValueError.
+                logger.warning('prep for %s failed (attempt %d/%d): %s',
+                               payload.job_id, i + 1, PREP_MAX_ATTEMPTS, err)
                 if i < len(PREP_BACKOFF_SCHEDULE):
                     self._sleep(PREP_BACKOFF_SCHEDULE[i])
+        else:
+            logger.error('prep for %s exhausted all attempts; aborting',
+                         payload.job_id)
+            self._abort(payload)
+            return False
 
-        logger.error('prep for %s exhausted all attempts; aborting',
-                     payload.job_id)
+        try:
+            self._dispatch(payload.job_id, payload.submission_id)
+        except Exception as err:
+            # One shot only: a failed handle() may have partially enqueued
+            # task entries, and calling it again for the same job_id would
+            # revive them (duplicate execution). Requeue via abort instead;
+            # slice 4 makes handle() atomic and closes this for good.
+            logger.warning('dispatch for %s failed: %s', payload.job_id, err)
+            self._abort(payload)
+        return False
+
+    def _abort(self, payload):
         self._result_queue.put(
             AbortRequest(payload.job_id, payload.submission_id, 'prep_failed'))
-        # Do NOT remove from tracker; the sender does that after the abort.
-        return False
+        # Do NOT remove from tracker; the sender does that as part of
+        # finalizing the abort.
 
     def stop(self):
         self._stop_event.set()
