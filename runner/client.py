@@ -26,6 +26,33 @@ class BackendAuthError(BackendAPIError):
 
 
 @dataclass
+class JobPayload:
+    """A job claimed from GET /runners/<rn>/next-job (spec §7.3 wire contract)."""
+    job_id: str
+    submission_id: str
+    problem_id: int
+    language: int
+    code_url: str
+    checker: object
+    tasks: list
+
+    @classmethod
+    def from_dict(cls, body):
+        return cls(
+            job_id=body['job_id'],
+            submission_id=body['submission_id'],
+            # The backend job hash stores fields as strings; normalize here
+            # so consumers never coerce.
+            problem_id=int(body['problem_id']),
+            language=body['language'],
+            code_url=body['code_url'],
+            # The runner does not use the checker yet; keep it optional.
+            checker=body.get('checker'),
+            tasks=body['tasks'],
+        )
+
+
+@dataclass
 class RunnerConfig:
     heartbeat_interval_sec: int
     poll_interval_sec: int
@@ -100,6 +127,47 @@ class BackendClient:
         if resp.status_code == 204:
             return
         self._raise_for_status(resp, 'heartbeat')
+
+    def next_job(self, identity):
+        """GET /runners/<rn>/next-job.
+
+        200 -> JobPayload; 204 -> None (no work available); other non-2xx ->
+        BackendAPIError / BackendAuthError. Network errors propagate.
+        """
+        resp = self.session.get(
+            f'{self.base_url}/runners/{identity.runner_id}/next-job',
+            headers={'Authorization': f'Bearer {identity.token}'},
+            timeout=self.timeout,
+        )
+        if resp.status_code == 200:
+            return JobPayload.from_dict(resp.json())
+        if resp.status_code == 204:
+            return None
+        self._raise_for_status(resp, 'next-job')
+
+    def complete(self, identity, job_id, tasks):
+        """PUT /runners/<rn>/jobs/<job_id>/complete. Expect 204."""
+        resp = self.session.put(
+            f'{self.base_url}/runners/{identity.runner_id}/jobs/{job_id}/complete',
+            json={'tasks': tasks},
+            headers={'Authorization': f'Bearer {identity.token}'},
+            timeout=self.timeout,
+        )
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp, 'complete')
+
+    def abort(self, identity, job_id, reason):
+        """PUT /runners/<rn>/jobs/<job_id>/abort. Expect 202."""
+        resp = self.session.put(
+            f'{self.base_url}/runners/{identity.runner_id}/jobs/{job_id}/abort',
+            json={'reason': reason},
+            headers={'Authorization': f'Bearer {identity.token}'},
+            timeout=self.timeout,
+        )
+        if resp.status_code == 202:
+            return
+        self._raise_for_status(resp, 'abort')
 
     @staticmethod
     def _raise_for_status(resp, action):
