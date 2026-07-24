@@ -14,7 +14,7 @@ from .utils import (
     logger,
 )
 from .config import (
-    BACKEND_API,
+    BACKEND_URL,
     SANDBOX_TOKEN,
     TESTDATA_ROOT,
 )
@@ -41,7 +41,7 @@ def handle_problem_response(resp: rq.Response):
 def fetch_problem_meta(problem_id: int) -> str:
     logger().debug(f'fetch problem meta [problem_id={problem_id}]')
     resp = rq.get(
-        f'{BACKEND_API}/problem/{problem_id}/meta',
+        f'{BACKEND_URL}/problem/{problem_id}/meta',
         params={
             'token': SANDBOX_TOKEN,
         },
@@ -71,7 +71,7 @@ def fetch_testdata(problem_id: int):
     '''
     logger().debug(f'fetch problem testdata [problem_id={problem_id}]')
     resp = rq.get(
-        f'{BACKEND_API}/problem/{problem_id}/testdata',
+        f'{BACKEND_URL}/problem/{problem_id}/testdata',
         params={
             'token': SANDBOX_TOKEN,
         },
@@ -82,7 +82,7 @@ def fetch_testdata(problem_id: int):
 
 def get_checksum(problem_id: int) -> str:
     resp = rq.get(
-        f'{BACKEND_API}/problem/{problem_id}/checksum',
+        f'{BACKEND_URL}/problem/{problem_id}/checksum',
         params={
             'token': SANDBOX_TOKEN,
         },

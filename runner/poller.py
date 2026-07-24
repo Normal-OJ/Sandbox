@@ -89,7 +89,10 @@ class PollerThread(threading.Thread):
 
     def _poll_once(self):
         """Claim and prep one job. Returns True when the loop should idle."""
-        # Capacity gate: only GET next-job when there is room (spec §10).
+        # Capacity gate: only GET next-job when there is room (spec §10). This
+        # also bounds the task dimension: the dispatcher task queue is unbounded
+        # and its volume is bounded by this job-level gate × per-job case count,
+        # so dispatch can never fail on capacity.
         if len(self._tracker) >= self._identity.config.max_concurrent_jobs:
             return True
         try:
@@ -124,10 +127,9 @@ class PollerThread(threading.Thread):
         try:
             self._dispatch(payload.job_id, payload.submission_id)
         except Exception as err:
-            # One shot only: a failed handle() may have partially enqueued
-            # task entries, and calling it again for the same job_id would
-            # revive them (duplicate execution). Requeue via abort instead;
-            # slice 4 makes handle() atomic and closes this for good.
+            # handle() is atomic (it validates before any state/queue
+            # mutation), so an exception here means the prepped job dir/meta
+            # is genuinely bad -- abort(prep_failed) is the right response.
             logger.warning('dispatch for %s failed: %s', payload.job_id, err)
             self._abort(payload)
         return False

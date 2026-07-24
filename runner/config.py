@@ -1,13 +1,10 @@
 import os
 import socket
 
-# Backend base URL for the pull-based runner API. Coexists with the legacy
-# BACKEND_API (dispatcher/config.py) until the keystone slice removes the
-# old push path.
-BACKEND_URL = os.getenv(
-    'BACKEND_URL',
-    'http://web:8080',
-)
+# Single source of truth for the backend base URL, shared with the legacy
+# testdata channel. runner/ already imports from dispatcher/ so this reuse
+# introduces no layering issue or import cycle.
+from dispatcher.config import BACKEND_URL
 # Shared secret presented to POST /runners/register.
 RUNNER_REGISTRATION_TOKEN = os.getenv(
     'RUNNER_REGISTRATION_TOKEN',

@@ -2,11 +2,13 @@ import os
 from pathlib import Path
 
 # backend config
-BACKEND_API = os.getenv(
-    'BACKEND_API',
+BACKEND_URL = os.getenv(
+    'BACKEND_URL',
     'http://web:8080',
 )
-# sandbox token
+# Shared secret that now ONLY authenticates the legacy testdata channel
+# (backend /problem/<id>/meta|testdata|checksum ?token= query). Its retirement
+# is coordinated with the backend keystone re-authing those endpoints.
 SANDBOX_TOKEN = os.getenv(
     'SANDBOX_TOKEN',
     'KoNoSandboxDa',
