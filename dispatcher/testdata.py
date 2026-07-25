@@ -22,6 +22,17 @@ from .config import (
 META_DIR = TESTDATA_ROOT / 'meta'
 META_DIR.mkdir(exist_ok=True)
 
+# Unbounded network I/O here would stall a SIGTERM drain until docker's stop
+# grace period SIGKILLs us (losing in-flight results), because prep runs inside
+# the poller iteration that stop() has to interrupt. Every request and every
+# lock wait must be bounded so the poller's stop() takes effect within one
+# prep attempt.
+# redis-py raises LockError when the lock cannot be acquired within
+# LOCK_BLOCKING_TIMEOUT, which the poller's prep retry already treats as a
+# prep failure.
+HTTP_TIMEOUT = (5, 30)  # (connect, read) seconds
+LOCK_BLOCKING_TIMEOUT = 30  # seconds
+
 
 def calc_checksum(data: bytes) -> str:
     return hashlib.md5(data).hexdigest()
@@ -45,6 +56,7 @@ def fetch_problem_meta(problem_id: int) -> str:
         params={
             'token': SANDBOX_TOKEN,
         },
+        timeout=HTTP_TIMEOUT,
     )
     handle_problem_response(resp)
     content = json.dumps(resp.json()['data'])
@@ -75,6 +87,7 @@ def fetch_testdata(problem_id: int):
         params={
             'token': SANDBOX_TOKEN,
         },
+        timeout=HTTP_TIMEOUT,
     )
     handle_problem_response(resp)
     return resp.content
@@ -86,6 +99,7 @@ def get_checksum(problem_id: int) -> str:
         params={
             'token': SANDBOX_TOKEN,
         },
+        timeout=HTTP_TIMEOUT,
     )
     handle_problem_response(resp)
     return resp.json()['data']
@@ -98,7 +112,9 @@ def ensure_testdata(problem_id: int):
     client = get_redis_client()
     key = f'problem-{problem_id}-checksum'
     lock_key = f'{key}-lock'
-    with client.lock(lock_key, timeout=60):
+    with client.lock(lock_key,
+                     timeout=60,
+                     blocking_timeout=LOCK_BLOCKING_TIMEOUT):
         curr_checksum = client.get(key)
         if curr_checksum is not None:
             curr_checksum = curr_checksum.decode()

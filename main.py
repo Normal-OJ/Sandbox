@@ -5,8 +5,10 @@ poller claims jobs, the heartbeat renews leases, and the result sender reports
 outcomes. There is no Flask and no inbound HTTP server anymore -- the runner
 only talks *out* to the backend runner API.
 
-Import-safe: nothing here touches the filesystem, network, or logging config
-at import time, so tests can import main and exercise the helpers directly.
+Import-safe: nothing here starts a thread, talks to the network, or configures
+logging at import time, so tests can import main and exercise the helpers
+directly. (Importing dispatcher.config on the way in does create the working
+directories it owns -- that predates this module.)
 """
 
 import logging
@@ -19,6 +21,7 @@ import time
 
 from runner.client import BackendClient, BackendAuthError
 from runner.active_jobs import ActiveJobTracker
+from runner.config import DRAIN_TIMEOUT_SEC
 from runner.heartbeat import HeartbeatThread
 from runner.poller import PollerThread
 from runner.registration import register_with_backoff
@@ -82,12 +85,30 @@ def _registration_token():
     return config.RUNNER_REGISTRATION_TOKEN
 
 
+def install_signal_handlers(shutdown):
+    """Route SIGTERM (docker stop) and SIGINT into the graceful drain.
+
+    The handler only sets ``shutdown``; the drain itself runs on the main
+    thread once ``shutdown.wait()`` returns, so no drain work happens in
+    signal context.
+    """
+
+    def _on_signal(signum, _frame):
+        logger.info('received signal %s; shutting down', signum)
+        shutdown.set()
+
+    signal.signal(signal.SIGTERM, _on_signal)
+    signal.signal(signal.SIGINT, _on_signal)
+
+
 def drain(poller,
           dispatcher,
           sender,
           heartbeat,
           result_queue,
-          sleep=time.sleep):
+          sleep=time.sleep,
+          timeout_sec=DRAIN_TIMEOUT_SEC,
+          monotonic=time.monotonic):
     """SIGTERM graceful drain (spec §10). Returns 0.
 
     The ordering here is the whole point of the slice:
@@ -97,33 +118,53 @@ def drain(poller,
     2. Abort every not-yet-started job with reason 'drain' (the backend does
        not count drain aborts against a submission's attempts).
     3. Wait for in-flight (already-started) jobs to finish; they push
-       CompleteRequests. Per-case executor timeouts bound this wait; the
-       docker stop grace period is the backstop.
+       CompleteRequests.
     4. Stop the dispatcher.
     5. Stop the sender -- it exits only once the queue is empty, so every
        queued complete and drain abort is actually reported first.
     6. Stop the heartbeat LAST: complete/abort need a live lease until sent,
        so the heartbeat must outlive the sender.
+
+    Every wait shares one budget (``timeout_sec``). Draining is best-effort:
+    prep and result I/O can be bounded per request but never in total, so
+    waiting forever would just hand the decision to docker's SIGKILL and throw
+    away the results already collected. Anything that misses the budget is left
+    to lease expiry and backend reclaim.
     """
+    deadline = monotonic() + timeout_sec
+
+    def remaining():
+        return max(0.0, deadline - monotonic())
+
+    def join_within(component, name):
+        component.join(timeout=remaining())
+        if component.is_alive():
+            logger.error(
+                'drain: %s outlived the budget; its work is left to lease '
+                'expiry and backend reclaim', name)
+
     poller.stop()
-    poller.join()
+    join_within(poller, 'poller')
 
     for job_id, submission_id in dispatcher.drain_unstarted():
         result_queue.put(AbortRequest(job_id, submission_id, 'drain'))
 
     waited = 0
     while dispatcher.has_jobs():
+        if not remaining():
+            logger.error('drain: budget exhausted with jobs still in flight')
+            break
         sleep(0.5)
         waited += 1
         if waited % 20 == 0:
             logger.info('drain: waiting for in-flight jobs to finish')
 
     dispatcher.stop()
-    dispatcher.join()
+    join_within(dispatcher, 'dispatcher')
     sender.stop()
-    sender.join()
+    join_within(sender, 'result sender')
     heartbeat.stop()
-    heartbeat.join()
+    join_within(heartbeat, 'heartbeat')
     return 0
 
 
@@ -134,12 +175,7 @@ def main():
     shutdown = threading.Event()
     fatal = threading.Event()
 
-    def _on_signal(signum, _frame):
-        logger.info('received signal %s; shutting down', signum)
-        shutdown.set()
-
-    signal.signal(signal.SIGTERM, _on_signal)
-    signal.signal(signal.SIGINT, _on_signal)
+    install_signal_handlers(shutdown)
 
     if not _registration_token():
         logger.error(

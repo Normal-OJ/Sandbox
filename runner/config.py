@@ -31,3 +31,8 @@ PREP_MAX_ATTEMPTS = 3
 PREP_BACKOFF_SCHEDULE = (1, 2)
 # Backoff (seconds) between complete/abort resends; len == max retries (spec §7).
 SEND_RETRY_BACKOFF_SCHEDULE = (1, 2, 4, 8, 16)
+# Total budget (seconds) for the SIGTERM drain. Prep and result I/O can only
+# be bounded per request, never in total, so the drain caps itself instead of
+# letting docker's SIGKILL decide -- leaving headroom under the
+# `docker stop --time=600` the deployment uses (spec §10).
+DRAIN_TIMEOUT_SEC = 540
