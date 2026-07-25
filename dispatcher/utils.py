@@ -1,14 +1,10 @@
 import logging
 import os
 import redis
-from flask import current_app
 
 
 def logger() -> logging.Logger:
-    try:
-        return current_app.logger
-    except RuntimeError:
-        return logging.getLogger('gunicorn.error')
+    return logging.getLogger('sandbox')
 
 
 # Fake redis server
@@ -33,5 +29,12 @@ def get_redis_client():
     # Create connection pool
     global redis_pool
     if redis_pool is None:
-        redis_pool = redis.ConnectionPool.from_url(REDIS_URL)
+        # Bounded socket I/O for the same reason as the testdata HTTP
+        # timeouts: a wedged redis must not be able to hang a SIGTERM drain
+        # until docker's stop grace period kills us.
+        redis_pool = redis.ConnectionPool.from_url(
+            REDIS_URL,
+            socket_timeout=10,
+            socket_connect_timeout=5,
+        )
     return redis.Redis(connection_pool=redis_pool)

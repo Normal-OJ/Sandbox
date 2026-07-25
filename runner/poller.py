@@ -2,12 +2,12 @@ import io
 import logging
 import shutil
 import threading
-import time
 
 import requests
 
 from dispatcher import file_manager, testdata
 from dispatcher.config import SUBMISSION_DIR
+from dispatcher.exception import DispatcherDrainingError
 from dispatcher.meta import Meta
 from .client import BackendAPIError
 from .config import REQUEST_TIMEOUT, PREP_MAX_ATTEMPTS, PREP_BACKOFF_SCHEDULE
@@ -46,6 +46,18 @@ class PollerThread(threading.Thread):
     Only polls when there is spare capacity, adds the claimed job to the
     tracker before prep so the heartbeat renews the lease while downloading,
     and retries prep locally before giving up with a prep_failed abort.
+
+    Drain safety: a claim that is still in prep when stop() lands is returned
+    to the backend as a 'drain' abort (see _poll_once). A claim whose prep
+    happens to finish after stop() still attempts to dispatch, and the
+    DISPATCHER decides: handle() checks the drain latch inside the same
+    critical section that publishes the job, so a dispatch either lands
+    before the latch (and main.drain()'s scan returns it) or raises
+    DispatcherDrainingError without publishing anything (and _poll_once
+    returns the claim as a 'drain' abort). Checking the stop event here
+    before dispatching could not close that race -- stop() can land between
+    the check and the dispatch -- which is why the latch check lives with
+    the publication instead.
     """
 
     def __init__(
@@ -58,7 +70,7 @@ class PollerThread(threading.Thread):
         *,
         prepare=None,
         poll_interval_sec=None,
-        sleep=time.sleep,
+        sleep=None,
     ):
         super().__init__(daemon=True)
         self._client = client
@@ -70,8 +82,10 @@ class PollerThread(threading.Thread):
         self._poll_interval_sec = (poll_interval_sec
                                    if poll_interval_sec is not None else
                                    identity.config.poll_interval_sec)
-        self._sleep = sleep
         self._stop_event = threading.Event()
+        # The prep backoff must be interruptible by stop(), or a drain waits
+        # out the full schedule before the poller can return its claim.
+        self._sleep = sleep if sleep is not None else self._stop_event.wait
 
     def run(self):
         while not self._stop_event.is_set():
@@ -89,8 +103,16 @@ class PollerThread(threading.Thread):
 
     def _poll_once(self):
         """Claim and prep one job. Returns True when the loop should idle."""
-        # Capacity gate: only GET next-job when there is room (spec §10).
+        # Capacity gate: only GET next-job when there is room (spec §10). This
+        # also bounds the task dimension: the dispatcher task queue is unbounded
+        # and its volume is bounded by this job-level gate × per-job case count,
+        # so dispatch can never fail on capacity.
         if len(self._tracker) >= self._identity.config.max_concurrent_jobs:
+            return True
+        # Do not take on new work once draining. This narrows but cannot close
+        # the window -- stop() can still land while the claim HTTP call is in
+        # flight -- so the prep-loop check below is what guarantees correctness.
+        if self._stop_event.is_set():
             return True
         try:
             payload = self._client.next_job(self._identity)
@@ -106,6 +128,16 @@ class PollerThread(threading.Thread):
         self._tracker.add(payload.job_id)
 
         for i in range(PREP_MAX_ATTEMPTS):
+            if self._stop_event.is_set():
+                # This claim never started any work, so it has to go back as a
+                # 'drain' abort: drain is attempt-neutral and requeued
+                # immediately, whereas 'prep_failed' counts against the
+                # submission's attempts and would let a rolling restart push
+                # otherwise healthy submissions to JE (spec §7.5, §12).
+                logger.info('draining: returning unstarted claim %s',
+                            payload.job_id)
+                self._abort(payload, 'drain')
+                return False
             try:
                 self._prepare(payload)
                 break
@@ -116,25 +148,53 @@ class PollerThread(threading.Thread):
                 if i < len(PREP_BACKOFF_SCHEDULE):
                     self._sleep(PREP_BACKOFF_SCHEDULE[i])
         else:
-            logger.error('prep for %s exhausted all attempts; aborting',
-                         payload.job_id)
-            self._abort(payload)
+            # stop() can also land during the final attempt, i.e. after the
+            # loop's own check has run for the last time. The claim still
+            # never started any work, so drain semantics win here too.
+            if self._stop_event.is_set():
+                logger.info(
+                    'draining: returning unstarted claim %s after a '
+                    'failed prep', payload.job_id)
+                self._abort(payload, 'drain')
+            else:
+                logger.error('prep for %s exhausted all attempts; aborting',
+                             payload.job_id)
+                self._abort(payload, 'prep_failed')
             return False
 
         try:
-            self._dispatch(payload.job_id, payload.submission_id)
+            superseded = self._dispatch(payload.job_id, payload.submission_id)
+        except DispatcherDrainingError:
+            # The drain latched the dispatcher while this claim was in prep.
+            # Nothing was published and nothing started, so the claim goes
+            # back attempt-neutrally, same as a prep interrupted by stop().
+            logger.info('draining: dispatcher refused %s; returning claim',
+                        payload.job_id)
+            self._abort(payload, 'drain')
         except Exception as err:
-            # One shot only: a failed handle() may have partially enqueued
-            # task entries, and calling it again for the same job_id would
-            # revive them (duplicate execution). Requeue via abort instead;
-            # slice 4 makes handle() atomic and closes this for good.
+            # handle() is atomic (it validates before any state/queue
+            # mutation), so an exception here means the prepped job dir/meta
+            # is genuinely bad -- abort(prep_failed) is the right response even
+            # mid-drain, because the job must converge rather than be requeued
+            # onto another runner that would hit the same bad payload.
             logger.warning('dispatch for %s failed: %s', payload.job_id, err)
-            self._abort(payload)
+            self._abort(payload, 'prep_failed')
+        else:
+            if superseded:
+                # This claim replaced an earlier generation of the same
+                # job_id (the backend reclaimed its expired lease, requeued,
+                # and we claimed it again). The dead generation fails every
+                # identity check from now on, so nothing else will ever
+                # produce an outcome for it -- release its tracker count
+                # here, keeping adds and removes balanced at one per claim.
+                logger.info('claim of %s superseded a previous generation',
+                            payload.job_id)
+                self._tracker.remove(payload.job_id)
         return False
 
-    def _abort(self, payload):
+    def _abort(self, payload, reason):
         self._result_queue.put(
-            AbortRequest(payload.job_id, payload.submission_id, 'prep_failed'))
+            AbortRequest(payload.job_id, payload.submission_id, reason))
         # Do NOT remove from tracker; the sender does that as part of
         # finalizing the abort.
 

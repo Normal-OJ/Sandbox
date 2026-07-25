@@ -1,13 +1,10 @@
 import os
 import socket
 
-# Backend base URL for the pull-based runner API. Coexists with the legacy
-# BACKEND_API (dispatcher/config.py) until the keystone slice removes the
-# old push path.
-BACKEND_URL = os.getenv(
-    'BACKEND_URL',
-    'http://web:8080',
-)
+# Single source of truth for the backend base URL, shared with the legacy
+# testdata channel. runner/ already imports from dispatcher/ so this reuse
+# introduces no layering issue or import cycle.
+from dispatcher.config import BACKEND_URL
 # Shared secret presented to POST /runners/register.
 RUNNER_REGISTRATION_TOKEN = os.getenv(
     'RUNNER_REGISTRATION_TOKEN',
@@ -34,3 +31,8 @@ PREP_MAX_ATTEMPTS = 3
 PREP_BACKOFF_SCHEDULE = (1, 2)
 # Backoff (seconds) between complete/abort resends; len == max retries (spec §7).
 SEND_RETRY_BACKOFF_SCHEDULE = (1, 2, 4, 8, 16)
+# Total budget (seconds) for the SIGTERM drain. Prep and result I/O can only
+# be bounded per request, never in total, so the drain caps itself instead of
+# letting docker's SIGKILL decide -- leaving headroom under the
+# `docker stop --time=600` the deployment uses (spec §10).
+DRAIN_TIMEOUT_SEC = 540
