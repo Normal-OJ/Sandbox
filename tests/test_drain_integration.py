@@ -17,6 +17,7 @@ import pytest
 
 import main
 import dispatcher.dispatcher as dispatcher_mod
+from dispatcher import job as job_mod
 from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
 from runner.active_jobs import ActiveJobTracker
@@ -209,7 +210,7 @@ def rig():
         r.shutdown()
 
 
-def build_stack(rig, tmp_path, client, prepare):
+def build_stack(rig, tmp_path, client, prepare, wrap_dispatch=None):
     """Real dispatcher + sender + poller + heartbeat, started and tracked."""
     identity = RunnerIdentity(
         'rn_x',
@@ -254,7 +255,8 @@ def build_stack(rig, tmp_path, client, prepare):
         identity,
         tracker,
         result_queue,
-        dispatch=d.handle,
+        dispatch=(wrap_dispatch(d.handle)
+                  if wrap_dispatch is not None else d.handle),
         prepare=prepare,
     )
     heartbeat = HeartbeatThread(client,
@@ -340,6 +342,114 @@ def test_drain_completes_in_flight_and_returns_unstarted(
     # The dispatcher run loop sleeps up to 1s before noticing stop(), so the
     # bound is generous; the point is that drain returns on its own.
     assert elapsed < 8.0, f'drain took {elapsed:.2f}s'
+
+
+class GhostFeeder:
+    """Keeps the dispatcher run loop hot so it can react within a test.
+
+    The run loop sleeps a full second whenever its queue is empty -- longer
+    than a whole drain takes here, so by default it never even wakes up and
+    any "it did not start the job" assertion passes for the wrong reason. This
+    keeps a backlog of tasks for jobs that do not exist (the loop discards
+    them), so the loop is genuinely spinning and will pounce on anything
+    dispatched during the drain.
+
+    ``fed`` only grows once the loop consumes what it was given, which is how
+    a test can wait for the loop to actually be awake.
+    """
+
+    def __init__(self, dispatcher, done):
+        self._dispatcher = dispatcher
+        self._done = done
+        self.fed = 0
+
+    def run(self):
+        while not self._done.is_set():
+            while self._dispatcher.queue.qsize() < 32 and \
+                    not self._done.is_set():
+                self._dispatcher.queue.put(
+                    job_mod.Execute(job_id='ghost', task_id=0, case_id=0))
+                self.fed += 1
+            time.sleep(0.001)
+
+
+def keep_run_loop_busy(rig, dispatcher):
+    """Start a GhostFeeder and wait until the run loop is demonstrably awake."""
+    feeder = GhostFeeder(dispatcher, rig.add_event(threading.Event()))
+    threading.Thread(target=feeder.run, daemon=True).start()
+    wait_until(lambda: feeder.fed > 64, 'run loop to start consuming tasks')
+    return feeder
+
+
+def test_drain_latches_dispatcher_before_waiting_for_poller(
+    tmp_path,
+    monkeypatch,
+    rig,
+):
+    # End-to-end shape of the ordering: the poller finishes a prep and
+    # dispatches while drain is joining it, with the run loop awake and hungry
+    # rather than parked in its idle sleep. The job must still come back as a
+    # drain abort and must never be judged.
+    #
+    # This exercises the path; it does not pin the interleaving. Whether the
+    # run loop wins the microseconds between the dispatch and the scan is a
+    # scheduling detail no test can force without injecting scheduling points.
+    # The guarantees themselves are pinned elsewhere: the required call order
+    # in tests/test_main.py, and the latch's effect on the run loop in
+    # tests/test_dispatcher.py.
+    recorder = ExecutorRecorder()
+    rig.add_event(recorder.release)
+    install_stub_executor(monkeypatch, recorder)
+
+    client = RecordingClient([make_payload('L', 'sub_l')])
+    prep_entered = threading.Event()
+    prep_release = rig.add_event(threading.Event())
+    job_root = SimpleNamespace(SUBMISSION_DIR=tmp_path)
+
+    def prepare(payload):
+        prep_entered.set()
+        prep_release.wait(WAIT_TIMEOUT)
+        _write_job_dir(job_root, payload.job_id, Language.PY, [1])
+
+    def linger_after_dispatch(handle):
+        # Widen the window between the dispatch and the poller thread actually
+        # ending. In production that window is one GIL slice -- narrow, but it
+        # is precisely the window this ordering must close, and a test that
+        # cannot lose the race is not testing the ordering at all.
+        def _dispatch(job_id, submission_id):
+            handle(job_id, submission_id)
+            time.sleep(0.3)
+
+        return _dispatch
+
+    d, sender, poller, heartbeat, result_queue, tracker = build_stack(
+        rig, tmp_path, client, prepare, wrap_dispatch=linger_after_dispatch)
+    keep_run_loop_busy(rig, d)
+
+    assert prep_entered.wait(WAIT_TIMEOUT), 'prep was never entered'
+
+    # Release prep only once drain has stopped the poller, so the dispatch
+    # lands squarely inside the join window.
+    release_when(
+        poller._stop_event.is_set,
+        prep_release,
+        'poller stop to be requested',
+    )
+    rc = main.drain(
+        poller,
+        d,
+        sender,
+        heartbeat,
+        result_queue,
+        sleep=lambda s: time.sleep(0.02),
+        timeout_sec=10.0,
+    )
+
+    assert rc == 0
+    assert client.aborts == [('L', 'drain')]
+    assert client.completes == []
+    assert recorder.ran == [], 'job started judging after shutdown'
+    assert 'L' not in d.started
 
 
 def test_drain_returns_claim_whose_prep_succeeded_after_stop(

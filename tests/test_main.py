@@ -39,6 +39,9 @@ class FakeDispatcher(FakeComponent):
         self._has_jobs_seq = list(has_jobs_seq)
         self._always_has_jobs = always_has_jobs
 
+    def stop_accepting(self):
+        self._log.append('dispatcher.stop_accepting')
+
     def drain_unstarted(self):
         self._log.append('dispatcher.drain_unstarted')
         return self._victims
@@ -71,6 +74,12 @@ def test_drain_orders_shutdown_and_aborts_unstarted():
     # poller fully stopped before the dispatcher is scanned for victims.
     assert log.index('poller.stop') < log.index('poller.join')
     assert log.index('poller.join') < log.index('dispatcher.drain_unstarted')
+    # The latch goes in BEFORE we wait for the poller. The poller can still
+    # finish a prep and dispatch during that wait, and the run loop would
+    # start that job if the dispatcher were still accepting -- work beginning
+    # after shutdown, which the scan afterwards would then leave alone.
+    assert log.index('dispatcher.stop_accepting') < log.index('poller.join')
+    assert log.index('poller.stop') < log.index('dispatcher.stop_accepting')
     # both unstarted jobs aborted with reason 'drain'.
     aborts = []
     while not result_queue.empty():

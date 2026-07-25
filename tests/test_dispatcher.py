@@ -140,7 +140,7 @@ def test_drain_unstarted_latches_the_run_loop(docker_dispatcher: Dispatcher):
     # would be reclaimed with its attempts already spent, not requeued
     # attempt-neutrally like a drain abort.
     docker_dispatcher.start()
-    docker_dispatcher.drain_unstarted()
+    docker_dispatcher.stop_accepting()
     assert docker_dispatcher.accepting is False
 
     _write_job_dir(docker_dispatcher, 'late', Language.PY, [1])

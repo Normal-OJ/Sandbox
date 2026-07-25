@@ -113,26 +113,30 @@ class Dispatcher(threading.Thread):
         with (job_path / 'meta.json').open() as f:
             submission_config = Meta.parse_obj(json.load(f))
 
-        # assign job context
+        # Publish the job state and its tasks under state_lock, so a drain
+        # scan holding that lock sees either all of this job or none of it.
+        # A late dispatch (the poller finishing a prep as drain begins) is
+        # therefore never half-visible to drain_unstarted().
         task_content = {}
-        self.result[job_id] = (submission_config, task_content)
-        self.locks[job_id] = threading.Lock()
-        self.compile_locks[job_id] = threading.Lock()
-        self.submission_ids[job_id] = submission_id
+        with self.state_lock:
+            self.result[job_id] = (submission_config, task_content)
+            self.locks[job_id] = threading.Lock()
+            self.compile_locks[job_id] = threading.Lock()
+            self.submission_ids[job_id] = submission_id
 
-        logger().debug(f'current jobs: {[*self.result.keys()]}')
-        if self.compile_need(submission_config.language):
-            self.queue.put_nowait(job.Compile(job_id=job_id))
-        for i, task in enumerate(submission_config.tasks):
-            for j in range(task.caseCount):
-                case_no = f'{i:02d}{j:02d}'
-                task_content[case_no] = None
-                _job = job.Execute(
-                    job_id=job_id,
-                    task_id=i,
-                    case_id=j,
-                )
-                self.queue.put_nowait(_job)
+            logger().debug(f'current jobs: {[*self.result.keys()]}')
+            if self.compile_need(submission_config.language):
+                self.queue.put_nowait(job.Compile(job_id=job_id))
+            for i, task in enumerate(submission_config.tasks):
+                for j in range(task.caseCount):
+                    case_no = f'{i:02d}{j:02d}'
+                    task_content[case_no] = None
+                    _job = job.Execute(
+                        job_id=job_id,
+                        task_id=i,
+                        case_id=j,
+                    )
+                    self.queue.put_nowait(_job)
 
     def release(self, job_id: str):
         with self.state_lock:
@@ -153,20 +157,30 @@ class Dispatcher(threading.Thread):
                 del v[job_id]
         self.started.discard(job_id)
 
+    def stop_accepting(self):
+        '''Stop starting new jobs; in-flight ones keep running.
+
+        Call this BEFORE waiting for the poller to finish, not after: the
+        poller can still complete a prep and dispatch a job while drain is
+        joining it, and until this latch is set the run loop is free to pick
+        that job up. It would then be judging work that began after shutdown,
+        get abandoned when the process exits, and come back through reclaim
+        with its claim attempt already spent, instead of being requeued
+        attempt-neutrally by drain_unstarted().
+        '''
+        with self.state_lock:
+            self.accepting = False
+
     def drain_unstarted(self):
-        '''Latch draining, then release every job with no started work.
+        '''Release every job with no started work, and return them.
 
-        Returns [(job_id, submission_id)] for the released jobs. Called during
-        SIGTERM drain once the poller has stopped; started (in-flight) jobs are
-        left to finish and report normally.
+        Returns [(job_id, submission_id)] for the released jobs. Call after
+        stop_accepting() and after the poller has finished, so the scan sees
+        every job that was ever dispatched and none of them can still become
+        started; in-flight jobs are left to finish and report normally.
 
-        Latching and scanning happen under one lock hold, and run() takes the
-        same lock before marking a job started, so no job can slip from
-        unstarted to started in between. Without the latch, a job the poller
-        dispatched in its final iteration could be picked up by the run loop
-        while drain is still walking towards this scan -- work started *after*
-        shutdown, which then has to be abandoned mid-flight and reclaimed with
-        its attempts already spent, instead of being requeued attempt-neutrally.
+        Latches on its own too, so a caller that skips stop_accepting() still
+        gets a consistent scan -- just a wider window before it.
         '''
         with self.state_lock:
             self.accepting = False
