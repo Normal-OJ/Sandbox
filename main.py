@@ -33,6 +33,15 @@ from runner.result_sender import (
 
 logger = logging.getLogger('sandbox')
 
+# Fractions of the drain budget (see drain()). Waiting for the poller is the
+# least valuable thing the drain does -- an unstarted claim costs nothing to
+# hand back -- and the likeliest to get stuck, since a slow-drip response can
+# keep one prep attempt alive past any per-request timeout. Reserving a slice
+# for the reporting tail keeps a long-running job from leaving finished
+# results with no time left to send them.
+POLLER_JOIN_SHARE = 0.25
+REPORTING_RESERVE_SHARE = 0.25
+
 
 def setup_logging():
     """Configure root logging for the runner process.
@@ -125,7 +134,9 @@ def drain(poller,
     3. Scan, and abort everything unstarted with reason 'drain' (the backend
        does not count those against a submission's attempts).
     4. Wait for in-flight (already-started) jobs to finish; they push
-       CompleteRequests.
+       CompleteRequests. The dispatcher has to stay running for this: a job
+       whose first case is in flight still needs its remaining cases dispatched
+       or it never completes at all.
     5. Stop the dispatcher.
     6. Stop the sender -- it exits only once the queue is empty, so every
        queued complete and drain abort is actually reported first.
@@ -137,30 +148,41 @@ def drain(poller,
     waiting forever would just hand the decision to docker's SIGKILL and throw
     away the results already collected. Anything that misses the budget is left
     to lease expiry and backend reclaim.
+
+    The budget is not first-come-first-served, because the steps are not
+    equally worth waiting for. Reporting a finished judge run matters more than
+    waiting out a poller stuck in prep, so the poller gets a capped share and
+    the reporting tail keeps a reserve.
     """
     deadline = monotonic() + timeout_sec
 
-    def remaining():
-        return max(0.0, deadline - monotonic())
+    def remaining(reserve=0.0):
+        return max(0.0, deadline - monotonic() - reserve)
 
-    def join_within(component, name):
-        component.join(timeout=remaining())
+    def join_within(component, name, limit=None):
+        budget = remaining()
+        if limit is not None:
+            budget = min(budget, limit)
+        component.join(timeout=budget)
         if component.is_alive():
             logger.error(
                 'drain: %s outlived the budget; its work is left to lease '
                 'expiry and backend reclaim', name)
 
+    def return_unstarted():
+        for job_id, submission_id in dispatcher.drain_unstarted():
+            result_queue.put(AbortRequest(job_id, submission_id, 'drain'))
+
     # Before anything else, including stopping the poller: see step 1.
     dispatcher.stop_accepting()
     poller.stop()
-    join_within(poller, 'poller')
+    join_within(poller, 'poller', limit=timeout_sec * POLLER_JOIN_SHARE)
 
-    for job_id, submission_id in dispatcher.drain_unstarted():
-        result_queue.put(AbortRequest(job_id, submission_id, 'drain'))
+    return_unstarted()
 
     waited = 0
     while dispatcher.has_jobs():
-        if not remaining():
+        if not remaining(reserve=timeout_sec * REPORTING_RESERVE_SHARE):
             logger.error('drain: budget exhausted with jobs still in flight')
             break
         sleep(0.5)
@@ -170,6 +192,11 @@ def drain(poller,
 
     dispatcher.stop()
     join_within(dispatcher, 'dispatcher')
+    if poller.is_alive():
+        # It outlived its share and may have dispatched after the first scan.
+        # Those jobs cannot have started -- the latch saw to that -- but they
+        # still have to be handed back before the sender stops.
+        return_unstarted()
     sender.stop()
     join_within(sender, 'result sender')
     heartbeat.stop()

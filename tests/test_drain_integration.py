@@ -458,9 +458,14 @@ def test_drain_returns_claim_whose_prep_succeeded_after_stop(
     rig,
 ):
     # The nastier variant: stop() lands while prep is blocked, but prep then
-    # SUCCEEDS, so the poller dispatches the job on its way out. Nothing may
-    # start judging after shutdown -- the dispatcher latch has to return this
-    # job as a drain abort instead, and the executor must never run.
+    # SUCCEEDS, so the poller dispatches the job on its way out. It must come
+    # back as a drain abort and must never be judged.
+    #
+    # Note this passes with or without the dispatcher latch -- with the latch
+    # removed, the scan releases the job and the run loop discards its task on
+    # the `not contains` check instead. What the latch buys is that the same
+    # holds when the run loop gets there FIRST, which is scheduling and not
+    # something this test pins. tests/test_dispatcher.py pins the latch itself.
     recorder = ExecutorRecorder()
     rig.add_event(recorder.release)
     install_stub_executor(monkeypatch, recorder)

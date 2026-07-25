@@ -202,6 +202,39 @@ def test_latched_dispatcher_still_finishes_started_jobs(
     assert sorted(ran) == ['0000', '0001']
 
 
+def test_case_result_for_released_job_is_dropped_not_fatal(
+    docker_dispatcher: Dispatcher,
+    monkeypatch,
+):
+    # A case can finish after its job was released -- a drain, or the same
+    # job_id handled again after the backend reclaimed the lease. Indexing
+    # self.locks blindly would raise outside the JE guard and kill the worker
+    # without resolving anything, so the job would hang for the whole drain.
+    class StubExecutor:
+
+        def __init__(self, job_id, *args, **kwargs):
+            pass
+
+        def run(self):
+            return {'Status': 'AC'}
+
+    monkeypatch.setattr('dispatcher.dispatcher.SubmissionExecutor',
+                        StubExecutor)
+    _write_job_dir(docker_dispatcher, 'gone', Language.PY, [1])
+    docker_dispatcher.handle(job_id='gone', submission_id='sub-gone')
+    docker_dispatcher.release('gone')
+
+    docker_dispatcher.create_container(
+        job_id='gone',
+        case_no='0000',
+        mem_limit=65536,
+        time_limit=1000,
+        case_in_path='/nonexistent/0000.in',
+        case_out_path='/nonexistent/0000.out',
+        lang=Language.PY,
+    )
+
+
 def test_drain_unstarted_leaves_in_flight_jobs_running(
         docker_dispatcher: Dispatcher):
     # The latch must not strand a job that is already in flight: its remaining
@@ -252,6 +285,40 @@ def test_on_complete_wiring_receives_result_and_releases(
     assert not docker_dispatcher.contains(job_id)
 
 
+def test_on_job_complete_enqueues_before_releasing(
+        docker_dispatcher: Dispatcher):
+    # has_jobs() is bool(self.result), so releasing before the result is
+    # handed to on_complete would open a window where a concurrent drain sees
+    # an empty dispatcher, stops the sender, and loses this result entirely.
+    observed = {}
+
+    def on_complete(job_id, submission_id, tasks):
+        observed['contains'] = docker_dispatcher.contains(job_id)
+        observed['has_jobs'] = docker_dispatcher.has_jobs()
+
+    docker_dispatcher.testing = False
+    docker_dispatcher.on_complete = on_complete
+    _write_job_dir(docker_dispatcher, 'oc', Language.PY, [2])
+    docker_dispatcher.handle(job_id='oc', submission_id='sub-oc')
+
+    _, task_content = docker_dispatcher.result['oc']
+    for case_no in list(task_content):
+        docker_dispatcher.on_case_complete(
+            job_id='oc',
+            case_no=case_no,
+            stdout='',
+            stderr='',
+            exit_code=0,
+            exec_time=1,
+            mem_usage=1,
+            prob_status='AC',
+        )
+
+    assert observed == {'contains': True, 'has_jobs': True}
+    # ...and the release still happens, right after.
+    assert not docker_dispatcher.contains('oc')
+
+
 def test_compile_je_fallback(docker_dispatcher: Dispatcher, monkeypatch):
     # A crash the executor does not wrap (e.g. docker APIError) must still
     # produce a JE compile result so the job can complete instead of hanging.
@@ -271,3 +338,39 @@ def test_compile_je_fallback(docker_dispatcher: Dispatcher, monkeypatch):
     docker_dispatcher.compile('cj', Language.C)
 
     assert docker_dispatcher.compile_results['cj']['Status'] == 'JE'
+
+
+def test_execute_je_fallback(docker_dispatcher: Dispatcher, monkeypatch):
+    # Same contract as the compile path, for the execute path: an error the
+    # executor does not wrap must still resolve the case as JE. Left
+    # unresolved, the case never reports, the job never completes, and a drain
+    # waits out its whole budget on it before giving up.
+    #
+    # run() is the failure point here, but the guard covers the whole body --
+    # executor construction and extract_compile_result included -- so a stub
+    # that blew up in __init__ would land on JE just the same.
+    class BoomExecutor:
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run(self):
+            raise RuntimeError('docker exploded')
+
+    monkeypatch.setattr('dispatcher.dispatcher.SubmissionExecutor',
+                        BoomExecutor)
+    _write_job_dir(docker_dispatcher, 'ej', Language.PY, [1])
+    docker_dispatcher.handle(job_id='ej', submission_id='sub-ej')
+
+    docker_dispatcher.create_container(
+        'ej',
+        '0000',
+        65536,
+        1000,
+        'in.txt',
+        'out.txt',
+        Language.PY,
+    )
+
+    _, task_content = docker_dispatcher.result['ej']
+    assert task_content['0000']['status'] == 'JE'

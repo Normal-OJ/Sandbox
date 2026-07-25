@@ -360,7 +360,16 @@ class Dispatcher(threading.Thread):
             logger().exception(f'judge crashed for {job_id}/{case_no}')
             res = {'Status': 'JE'}
         logger().info(f'finish task {job_id}/{case_no}')
-        with self.locks[job_id]:
+        # Look the lock up defensively, like compile() does: the job may have
+        # been released while this case ran (a drain, or the same job_id being
+        # handled again after a reclaim). Indexing blindly would raise outside
+        # the guard above and kill this thread without resolving the case.
+        lock = self.locks.get(job_id)
+        if lock is None:
+            logger().warning(
+                f'case result for released job {job_id}/{case_no}; dropping')
+            return
+        with lock:
             self.on_case_complete(
                 job_id=job_id,
                 case_no=case_no,
