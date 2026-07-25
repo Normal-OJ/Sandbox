@@ -115,8 +115,11 @@ def drain(poller,
     1. Stop and JOIN the poller BEFORE scanning the dispatcher: a claim in
        flight mid-iteration must land in the dispatcher before we scan, or it
        would be dispatched after the scan and never aborted.
-    2. Abort every not-yet-started job with reason 'drain' (the backend does
-       not count drain aborts against a submission's attempts).
+    2. drain_unstarted() latches the dispatcher out of starting new work and
+       returns every job that has none, which we abort with reason 'drain' (the
+       backend does not count those against a submission's attempts). The latch
+       is what stops a job the poller dispatched in its last iteration from
+       being picked up while we are still on our way to this scan.
     3. Wait for in-flight (already-started) jobs to finish; they push
        CompleteRequests.
     4. Stop the dispatcher.

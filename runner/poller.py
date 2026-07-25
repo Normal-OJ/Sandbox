@@ -47,10 +47,14 @@ class PollerThread(threading.Thread):
     and retries prep locally before giving up with a prep_failed abort.
 
     Drain safety: a claim that is still in prep when stop() lands is returned
-    to the backend as a 'drain' abort (see _poll_once). A claim that gets past
-    prep and dispatches during a drain is not lost either -- main.drain() joins
-    the poller BEFORE calling dispatcher.drain_unstarted(), so the dispatcher
-    scan picks that job up.
+    to the backend as a 'drain' abort (see _poll_once). A claim whose prep
+    happens to finish after stop() still dispatches, and is returned by the
+    dispatcher instead: main.drain() joins the poller before calling
+    dispatcher.drain_unstarted(), which latches the dispatcher out of starting
+    new work and scans under the same lock the run loop uses. Checking the stop
+    event here before dispatching could not give that guarantee on its own --
+    the run loop could still mark the job started in the gap between the check
+    and the scan.
     """
 
     def __init__(

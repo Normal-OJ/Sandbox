@@ -60,6 +60,9 @@ class Dispatcher(threading.Thread):
         # guards the started-set transition against drain_unstarted() so a job
         # can never be both drain-aborted and started.
         self.started = set()
+        # Cleared by drain_unstarted(): from then on the run loop starts no
+        # further jobs, so nothing begins judging after shutdown was requested.
+        self.accepting = True
         self.state_lock = threading.Lock()
         # manage containers
         self.MAX_CONTAINER_SIZE = d_config.get('MAX_CONTAINER_NUMBER', 8)
@@ -151,12 +154,22 @@ class Dispatcher(threading.Thread):
         self.started.discard(job_id)
 
     def drain_unstarted(self):
-        '''Release every job with no started work and return [(job_id, submission_id)].
+        '''Latch draining, then release every job with no started work.
 
-        Called during SIGTERM drain after the poller has stopped; started
-        (in-flight) jobs are left to finish and report normally.
+        Returns [(job_id, submission_id)] for the released jobs. Called during
+        SIGTERM drain once the poller has stopped; started (in-flight) jobs are
+        left to finish and report normally.
+
+        Latching and scanning happen under one lock hold, and run() takes the
+        same lock before marking a job started, so no job can slip from
+        unstarted to started in between. Without the latch, a job the poller
+        dispatched in its final iteration could be picked up by the run loop
+        while drain is still walking towards this scan -- work started *after*
+        shutdown, which then has to be abandoned mid-flight and reclaimed with
+        its attempts already spent, instead of being requeued attempt-neutrally.
         '''
         with self.state_lock:
+            self.accepting = False
             victims = [(j, self.submission_ids[j]) for j in list(self.result)
                        if j not in self.started]
             for job_id, _ in victims:
@@ -192,6 +205,12 @@ class Dispatcher(threading.Thread):
                 # if a job was discarded, it will not appear in `self.result`
                 if not self.contains(job_id):
                     logger().info(f'discarded job [id={job_id}]')
+                    continue
+                # Draining: only jobs already in flight may keep consuming
+                # their remaining cases. Anything still unstarted belongs to
+                # drain_unstarted(), which returns it to the backend.
+                if not self.accepting and job_id not in self.started:
+                    logger().info(f'draining, not starting [id={job_id}]')
                     continue
                 # get task info
                 submission_config, _ = self.result[job_id]

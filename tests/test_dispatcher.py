@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 
 import pytest
 
@@ -129,6 +131,88 @@ def test_drain_unstarted_releases_only_unstarted(
     assert victims == [('j2', 'sub-j2')]
     assert docker_dispatcher.contains('j1')
     assert not docker_dispatcher.contains('j2')
+
+
+def test_drain_unstarted_latches_the_run_loop(docker_dispatcher: Dispatcher):
+    # After the scan, the run loop must not start anything else. Otherwise a
+    # job the poller dispatched in its final iteration could begin judging
+    # after shutdown, only to be abandoned when the process exits -- and it
+    # would be reclaimed with its attempts already spent, not requeued
+    # attempt-neutrally like a drain abort.
+    docker_dispatcher.start()
+    docker_dispatcher.drain_unstarted()
+    assert docker_dispatcher.accepting is False
+
+    _write_job_dir(docker_dispatcher, 'late', Language.PY, [1])
+    docker_dispatcher.handle(job_id='late', submission_id='sub-late')
+
+    # The run loop consuming the task is the signal that it has had its
+    # chance at this job; waiting a fixed slice instead would pass vacuously
+    # whenever the loop happened to still be in its idle sleep.
+    deadline = time.time() + 5.0
+    while not docker_dispatcher.queue.empty():
+        assert time.time() < deadline, 'run loop never consumed the task'
+        time.sleep(0.02)
+    assert 'late' not in docker_dispatcher.started
+    assert docker_dispatcher.container_count == 0
+    # Still releasable as an unstarted job, which is what drain does with it.
+    assert docker_dispatcher.drain_unstarted() == [('late', 'sub-late')]
+
+
+def test_latched_dispatcher_still_finishes_started_jobs(
+    docker_dispatcher: Dispatcher,
+    monkeypatch,
+):
+    # The latch must let an in-flight job consume its REMAINING cases. If it
+    # blocked those too, a multi-case job would never complete: drain would
+    # wait out its whole budget and the results already computed would be lost.
+    ran = []
+    first_case_running = threading.Event()
+    release = threading.Event()
+
+    class StubExecutor:
+
+        def __init__(self, job_id, *args, **kwargs):
+            self.case_no = kwargs.get('case_no')
+
+        def run(self):
+            ran.append(self.case_no)
+            if len(ran) == 1:
+                first_case_running.set()
+                release.wait(5.0)
+            return {'Status': 'AC'}
+
+    monkeypatch.setattr('dispatcher.dispatcher.SubmissionExecutor',
+                        StubExecutor)
+    # One container at a time, so the second case can only run after the first
+    # finishes -- i.e. after the latch is already in place.
+    docker_dispatcher.MAX_CONTAINER_SIZE = 1
+    _write_job_dir(docker_dispatcher, 'multi', Language.PY, [2])
+    docker_dispatcher.handle(job_id='multi', submission_id='sub-multi')
+    docker_dispatcher.start()
+
+    assert first_case_running.wait(5.0), 'first case never started'
+    assert docker_dispatcher.drain_unstarted() == []  # in flight, so kept
+    release.set()
+
+    deadline = time.time() + 5.0
+    while len(ran) < 2:
+        assert time.time() < deadline, 'second case never ran after the latch'
+        time.sleep(0.02)
+    assert sorted(ran) == ['0000', '0001']
+
+
+def test_drain_unstarted_leaves_in_flight_jobs_running(
+        docker_dispatcher: Dispatcher):
+    # The latch must not strand a job that is already in flight: its remaining
+    # cases still need to run, or the job never completes and drain waits out
+    # its whole budget.
+    _write_job_dir(docker_dispatcher, 'inflight', Language.PY, [2])
+    docker_dispatcher.handle(job_id='inflight', submission_id='sub-inflight')
+    docker_dispatcher.started.add('inflight')
+
+    assert docker_dispatcher.drain_unstarted() == []
+    assert docker_dispatcher.contains('inflight')
 
 
 def test_on_complete_wiring_receives_result_and_releases(

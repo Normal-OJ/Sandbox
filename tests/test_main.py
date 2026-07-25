@@ -89,6 +89,37 @@ def test_drain_orders_shutdown_and_aborts_unstarted():
             t is not None and t > 0 for t in component.join_timeouts)
 
 
+def test_drain_budget_is_shared_not_per_component():
+    # Each join must get what is LEFT of the budget, not a fresh copy of it.
+    # With a fresh copy per component, four slow components could stretch the
+    # drain to 4x the budget and blow past docker's stop grace period.
+    log = []
+    poller = FakeComponent(log, 'poller')
+    dispatcher = FakeDispatcher(log, [], [False])
+    sender = FakeComponent(log, 'sender')
+    heartbeat = FakeComponent(log, 'heartbeat')
+    # Each monotonic() call advances one second, so the budget visibly drains.
+    ticks = iter(range(1000))
+
+    main.drain(
+        poller,
+        dispatcher,
+        sender,
+        heartbeat,
+        queue.Queue(),
+        sleep=lambda s: None,
+        timeout_sec=100.0,
+        monotonic=lambda: float(next(ticks)),
+    )
+
+    granted = [
+        component.join_timeouts[0]
+        for component in (poller, dispatcher, sender, heartbeat)
+    ]
+    assert granted == sorted(granted, reverse=True), granted
+    assert granted[0] > granted[-1]
+
+
 def test_drain_gives_up_on_in_flight_jobs_when_budget_runs_out():
     # Waiting forever would hand the decision to docker's SIGKILL and lose the
     # results already queued; the budget makes the drain finish on its own and

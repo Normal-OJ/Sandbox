@@ -109,7 +109,10 @@ class RecordingClient:
     def next_job(self, identity):
         item = self._pop()
         if isinstance(item, threading.Event):
-            if not item.wait(2.0):
+            # Generous: the dispatcher run loop sleeps a full second when its
+            # queue is empty, so the test needs several of those to line up
+            # its preconditions before opening the gate.
+            if not item.wait(WAIT_TIMEOUT):
                 self.gate_timed_out = True
                 return None
             item = self._pop()
@@ -337,6 +340,60 @@ def test_drain_completes_in_flight_and_returns_unstarted(
     # The dispatcher run loop sleeps up to 1s before noticing stop(), so the
     # bound is generous; the point is that drain returns on its own.
     assert elapsed < 8.0, f'drain took {elapsed:.2f}s'
+
+
+def test_drain_returns_claim_whose_prep_succeeded_after_stop(
+    tmp_path,
+    monkeypatch,
+    rig,
+):
+    # The nastier variant: stop() lands while prep is blocked, but prep then
+    # SUCCEEDS, so the poller dispatches the job on its way out. Nothing may
+    # start judging after shutdown -- the dispatcher latch has to return this
+    # job as a drain abort instead, and the executor must never run.
+    recorder = ExecutorRecorder()
+    rig.add_event(recorder.release)
+    install_stub_executor(monkeypatch, recorder)
+
+    client = RecordingClient([make_payload('E', 'sub_e')])
+    prep_entered = threading.Event()
+    prep_release = rig.add_event(threading.Event())
+    job_root = SimpleNamespace(SUBMISSION_DIR=tmp_path)
+
+    def prepare(payload):
+        prep_entered.set()
+        prep_release.wait(WAIT_TIMEOUT)
+        # Succeeds this time: the claim is fully prepped and will be
+        # dispatched even though the poller is already stopping.
+        _write_job_dir(job_root, payload.job_id, Language.PY, [1])
+
+    d, sender, poller, heartbeat, result_queue, tracker = build_stack(
+        rig, tmp_path, client, prepare)
+
+    assert prep_entered.wait(WAIT_TIMEOUT), 'prep was never entered'
+
+    release_when(
+        poller._stop_event.is_set,
+        prep_release,
+        'poller stop to be requested',
+    )
+    rc = main.drain(
+        poller,
+        d,
+        sender,
+        heartbeat,
+        result_queue,
+        sleep=lambda s: time.sleep(0.02),
+        timeout_sec=10.0,
+    )
+
+    assert rc == 0
+    assert client.aborts == [('E', 'drain')]
+    assert client.completes == []
+    # Never judged: no work may begin once shutdown was requested.
+    assert recorder.ran == []
+    assert 'E' not in d.started
+    assert tracker.snapshot() == []
 
 
 def test_drain_returns_claim_blocked_in_prep(tmp_path, monkeypatch, rig):
