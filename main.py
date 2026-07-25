@@ -115,6 +115,7 @@ def drain(poller,
           sender,
           heartbeat,
           result_queue,
+          tracker,
           sleep=time.sleep,
           timeout_sec=DRAIN_TIMEOUT_SEC,
           monotonic=time.monotonic):
@@ -123,24 +124,40 @@ def drain(poller,
     The ordering here is the whole point of the slice:
     1. Latch the dispatcher FIRST, before touching anything else. The
        invariant is "once a drain starts, no job begins judging", so the latch
-       has to precede every other step -- including stopping the poller. Doing
-       it even one statement later leaves a window where the poller finishes a
-       prep, dispatches, and the run loop starts that job while the dispatcher
-       is still accepting. A job claimed in that same window is not lost: it
-       cannot start, and the scan below returns it.
-    2. Stop and JOIN the poller BEFORE scanning: a claim in flight mid
-       iteration must land in the dispatcher before we scan, or it would be
-       dispatched afterwards and never aborted.
+       has to precede every other step -- including stopping the poller. The
+       latch is also what makes the single scan below COMPLETE: handle()
+       checks it inside the same critical section that publishes a job, so
+       every job that ever published is visible to the scan, and any dispatch
+       after the latch is refused and returned by the poller itself as a
+       'drain' abort. Quiescence comes from the latch, not from guessing
+       whether the poller might still be running -- there is deliberately no
+       rescan and no is_alive() heuristic here.
+    2. Stop and JOIN the poller, capped at its share of the budget. The join
+       is an optimization, not a correctness step: a poller that exits now
+       makes the reporting tail below trivial, but a stuck one can no longer
+       publish anything the scan would miss.
     3. Scan, and abort everything unstarted with reason 'drain' (the backend
        does not count those against a submission's attempts).
     4. Wait for in-flight (already-started) jobs to finish; they push
        CompleteRequests. The dispatcher has to stay running for this: a job
        whose first case is in flight still needs its remaining cases dispatched
-       or it never completes at all.
-    5. Stop the dispatcher.
-    6. Stop the sender -- it exits only once the queue is empty, so every
-       queued complete and drain abort is actually reported first.
-    7. Stop the heartbeat LAST: complete/abort need a live lease until sent,
+       or it never completes at all. This wait keeps the reporting reserve.
+    5. Stop the dispatcher. Its join is bounded away from the reserve too:
+       the reserve exists for the sender, so no earlier step may consume it.
+    6. Reporting tail: keep the sender alive until the poller thread has
+       exited AND every claimed job's outcome has been finalized (the tracker
+       is empty), or the budget runs out. A poller stuck in prep I/O can
+       still wake up and queue a late 'drain' abort; stopping the sender any
+       earlier would throw that report away, so a stuck poller holds the
+       sender open to the deadline. In-flight jobs the wait above gave up on
+       also stay in the tracker -- if one finishes during this tail, its
+       result still goes out instead of being lost to lease expiry.
+    7. Stop the sender -- it exits only once the queue is empty, so every
+       queued complete and drain abort is actually reported first. (The
+       tracker can go empty a moment before the last abort's HTTP send
+       finishes -- the sender finalizes local state first -- and the join
+       here covers that last send within what is left of the budget.)
+    8. Stop the heartbeat LAST: complete/abort need a live lease until sent,
        so the heartbeat must outlive the sender.
 
     Every wait shares one budget (``timeout_sec``). Draining is best-effort:
@@ -155,12 +172,13 @@ def drain(poller,
     the reporting tail keeps a reserve.
     """
     deadline = monotonic() + timeout_sec
+    reserve = timeout_sec * REPORTING_RESERVE_SHARE
 
     def remaining(reserve=0.0):
         return max(0.0, deadline - monotonic() - reserve)
 
-    def join_within(component, name, limit=None):
-        budget = remaining()
+    def join_within(component, name, limit=None, reserve=0.0):
+        budget = remaining(reserve)
         if limit is not None:
             budget = min(budget, limit)
         component.join(timeout=budget)
@@ -169,20 +187,18 @@ def drain(poller,
                 'drain: %s outlived the budget; its work is left to lease '
                 'expiry and backend reclaim', name)
 
-    def return_unstarted():
-        for job_id, submission_id in dispatcher.drain_unstarted():
-            result_queue.put(AbortRequest(job_id, submission_id, 'drain'))
-
     # Before anything else, including stopping the poller: see step 1.
     dispatcher.stop_accepting()
     poller.stop()
     join_within(poller, 'poller', limit=timeout_sec * POLLER_JOIN_SHARE)
 
-    return_unstarted()
+    # The single scan (step 3): complete by construction, see the docstring.
+    for job_id, submission_id in dispatcher.drain_unstarted():
+        result_queue.put(AbortRequest(job_id, submission_id, 'drain'))
 
     waited = 0
     while dispatcher.has_jobs():
-        if not remaining(reserve=timeout_sec * REPORTING_RESERVE_SHARE):
+        if not remaining(reserve=reserve):
             logger.error('drain: budget exhausted with jobs still in flight')
             break
         sleep(0.5)
@@ -191,12 +207,18 @@ def drain(poller,
             logger.info('drain: waiting for in-flight jobs to finish')
 
     dispatcher.stop()
-    join_within(dispatcher, 'dispatcher')
-    if poller.is_alive():
-        # It outlived its share and may have dispatched after the first scan.
-        # Those jobs cannot have started -- the latch saw to that -- but they
-        # still have to be handed back before the sender stops.
-        return_unstarted()
+    join_within(dispatcher, 'dispatcher', reserve=reserve)
+
+    # The reporting tail (step 6).
+    waited = 0
+    while remaining() and (poller.is_alive() or len(tracker)):
+        sleep(0.5)
+        waited += 1
+        if waited % 20 == 0:
+            logger.info(
+                'drain: reporting tail waiting (poller alive: %s, '
+                'unreported jobs: %d)', poller.is_alive(), len(tracker))
+
     sender.stop()
     join_within(sender, 'result sender')
     heartbeat.stop()
@@ -261,7 +283,7 @@ def main():
         logger.error('heartbeat fail-fast; exiting without drain')
         return 1
 
-    return drain(poller, dispatcher, sender, heartbeat, result_queue)
+    return drain(poller, dispatcher, sender, heartbeat, result_queue, tracker)
 
 
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ import requests
 
 from dispatcher import file_manager, testdata
 from dispatcher.config import SUBMISSION_DIR
+from dispatcher.exception import DispatcherDrainingError
 from dispatcher.meta import Meta
 from .client import BackendAPIError
 from .config import REQUEST_TIMEOUT, PREP_MAX_ATTEMPTS, PREP_BACKOFF_SCHEDULE
@@ -48,13 +49,15 @@ class PollerThread(threading.Thread):
 
     Drain safety: a claim that is still in prep when stop() lands is returned
     to the backend as a 'drain' abort (see _poll_once). A claim whose prep
-    happens to finish after stop() still dispatches, and is returned by the
-    dispatcher instead: main.drain() joins the poller before calling
-    dispatcher.drain_unstarted(), which latches the dispatcher out of starting
-    new work and scans under the same lock the run loop uses. Checking the stop
-    event here before dispatching could not give that guarantee on its own --
-    the run loop could still mark the job started in the gap between the check
-    and the scan.
+    happens to finish after stop() still attempts to dispatch, and the
+    DISPATCHER decides: handle() checks the drain latch inside the same
+    critical section that publishes the job, so a dispatch either lands
+    before the latch (and main.drain()'s scan returns it) or raises
+    DispatcherDrainingError without publishing anything (and _poll_once
+    returns the claim as a 'drain' abort). Checking the stop event here
+    before dispatching could not close that race -- stop() can land between
+    the check and the dispatch -- which is why the latch check lives with
+    the publication instead.
     """
 
     def __init__(
@@ -161,6 +164,13 @@ class PollerThread(threading.Thread):
 
         try:
             self._dispatch(payload.job_id, payload.submission_id)
+        except DispatcherDrainingError:
+            # The drain latched the dispatcher while this claim was in prep.
+            # Nothing was published and nothing started, so the claim goes
+            # back attempt-neutrally, same as a prep interrupted by stop().
+            logger.info('draining: dispatcher refused %s; returning claim',
+                        payload.job_id)
+            self._abort(payload, 'drain')
         except Exception as err:
             # handle() is atomic (it validates before any state/queue
             # mutation), so an exception here means the prepped job dir/meta

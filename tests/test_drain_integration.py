@@ -324,6 +324,7 @@ def test_drain_completes_in_flight_and_returns_unstarted(
         sender,
         heartbeat,
         result_queue,
+        tracker,
         sleep=lambda s: time.sleep(0.02),
         # Bound the budget: drain runs on the test thread, so a regression must
         # fail the test rather than hang the whole suite.
@@ -391,11 +392,13 @@ def test_drain_latches_dispatcher_before_waiting_for_poller(
     # rather than parked in its idle sleep. The job must still come back as a
     # drain abort and must never be judged.
     #
-    # This exercises the path; it does not pin the interleaving. Whether the
-    # run loop wins the microseconds between the dispatch and the scan is a
-    # scheduling detail no test can force without injecting scheduling points.
+    # This exercises the path; it does not pin the interleaving. Whichever
+    # side of the latch the dispatch lands on, the outcome is the same by
+    # construction: before the latch it publishes and the scan returns it;
+    # after the latch handle() refuses it and the poller aborts it as drain.
     # The guarantees themselves are pinned elsewhere: the required call order
-    # in tests/test_main.py, and the latch's effect on the run loop in
+    # in tests/test_main.py, the refusal in test_handle_refuses_jobs_once_
+    # draining, and the latch's effect on the run loop in
     # tests/test_dispatcher.py.
     recorder = ExecutorRecorder()
     rig.add_event(recorder.release)
@@ -441,6 +444,7 @@ def test_drain_latches_dispatcher_before_waiting_for_poller(
         sender,
         heartbeat,
         result_queue,
+        tracker,
         sleep=lambda s: time.sleep(0.02),
         timeout_sec=10.0,
     )
@@ -458,14 +462,13 @@ def test_drain_returns_claim_whose_prep_succeeded_after_stop(
     rig,
 ):
     # The nastier variant: stop() lands while prep is blocked, but prep then
-    # SUCCEEDS, so the poller dispatches the job on its way out. It must come
-    # back as a drain abort and must never be judged.
+    # SUCCEEDS, so the poller tries to dispatch the job on its way out. It
+    # must come back as a drain abort and must never be judged.
     #
-    # Note this passes with or without the dispatcher latch -- with the latch
-    # removed, the scan releases the job and the run loop discards its task on
-    # the `not contains` check instead. What the latch buys is that the same
-    # holds when the run loop gets there FIRST, which is scheduling and not
-    # something this test pins. tests/test_dispatcher.py pins the latch itself.
+    # The dispatch here lands after the latch, so handle() refuses it and the
+    # poller itself queues the drain abort. This test pins the end-to-end
+    # outcome; the refusal semantics are pinned in
+    # test_handle_refuses_jobs_once_draining.
     recorder = ExecutorRecorder()
     rig.add_event(recorder.release)
     install_stub_executor(monkeypatch, recorder)
@@ -498,6 +501,7 @@ def test_drain_returns_claim_whose_prep_succeeded_after_stop(
         sender,
         heartbeat,
         result_queue,
+        tracker,
         sleep=lambda s: time.sleep(0.02),
         timeout_sec=10.0,
     )
@@ -549,6 +553,7 @@ def test_drain_returns_claim_blocked_in_prep(tmp_path, monkeypatch, rig):
         sender,
         heartbeat,
         result_queue,
+        tracker,
         sleep=lambda s: time.sleep(0.02),
         # Bound the budget: drain runs on the test thread, so a regression must
         # fail the test rather than hang the whole suite.

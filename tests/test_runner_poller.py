@@ -6,6 +6,7 @@ import time
 import pytest
 import requests
 
+from dispatcher.exception import DispatcherDrainingError
 from runner.client import (
     BackendAPIError,
     BackendAuthError,
@@ -379,6 +380,36 @@ def test_stop_during_final_prep_attempt_returns_claim_as_drain():
     assert isinstance(item, AbortRequest)
     assert item.reason == 'drain'
     assert q.empty()
+
+
+def test_dispatch_refused_by_draining_dispatcher_aborts_as_drain():
+    # A prep that finishes after the drain latched the dispatcher still tries
+    # to dispatch; handle() refuses it without publishing anything. That claim
+    # never started any work, so it must go back as 'drain' (attempt-neutral),
+    # never 'prep_failed' -- otherwise every rolling restart would burn an
+    # attempt for the claim that lost this race.
+    tracker = ActiveJobTracker()
+    prepare = PrepareRecorder(tracker)
+    dispatch = DispatchRecorder(fail_times=1,
+                                exc=DispatcherDrainingError('draining'))
+    poller, _, tracker, q, sleep, _ = build_poller([make_payload()],
+                                                   tracker=tracker,
+                                                   prepare=prepare,
+                                                   dispatch=dispatch)
+
+    result = poller._poll_once()
+
+    assert result is False
+    assert len(dispatch.calls) == 1  # refused once, never retried
+    assert sleep.slept == []
+    item = q.get_nowait()
+    assert isinstance(item, AbortRequest)
+    assert item.job_id == 'jb_1'
+    assert item.submission_id == 'sub_1'
+    assert item.reason == 'drain'
+    assert q.empty()
+    # Still in tracker: the sender removes it as it finalizes the abort.
+    assert tracker.snapshot() == ['jb_1']
 
 
 def test_stop_before_claim_skips_next_job():

@@ -7,6 +7,7 @@ import pytest
 from dispatcher import job
 from dispatcher.constant import Language
 from dispatcher.dispatcher import Dispatcher
+from dispatcher.exception import DispatcherDrainingError
 from tests.submission_generator import SubmissionGenerator
 
 
@@ -105,16 +106,34 @@ def test_handle_enqueues_all_cases_no_size_limit(
 
 def test_handle_missing_dir_is_atomic(docker_dispatcher: Dispatcher):
     # A missing job dir raises before any state is assigned: no leftover
-    # entry in result / locks / submission_ids and nothing enqueued.
+    # entry in result / submission_ids and nothing enqueued.
     with pytest.raises(FileNotFoundError):
         docker_dispatcher.handle(job_id='ghost', submission_id='sub-ghost')
 
     assert not docker_dispatcher.contains('ghost')
     assert docker_dispatcher.result == {}
-    assert docker_dispatcher.locks == {}
-    assert docker_dispatcher.compile_locks == {}
     assert docker_dispatcher.submission_ids == {}
     assert docker_dispatcher.queue.empty()
+
+
+def test_handle_refuses_jobs_once_draining(docker_dispatcher: Dispatcher):
+    # The latch check shares handle()'s publication critical section, which is
+    # what makes the drain's single scan complete: a dispatch that loses the
+    # race with the latch raises and publishes NOTHING, so no job can ever
+    # appear in the dispatcher after the scan ran. The poller turns this
+    # refusal into an attempt-neutral 'drain' abort.
+    _write_job_dir(docker_dispatcher, 'late', Language.PY, [1])
+    docker_dispatcher.stop_accepting()
+
+    with pytest.raises(DispatcherDrainingError):
+        docker_dispatcher.handle(job_id='late', submission_id='sub-late')
+
+    assert not docker_dispatcher.contains('late')
+    assert docker_dispatcher.result == {}
+    assert docker_dispatcher.submission_ids == {}
+    assert docker_dispatcher.queue.empty()
+    # Nothing published means nothing for the scan to (re)turn either.
+    assert docker_dispatcher.drain_unstarted() == []
 
 
 def test_drain_unstarted_releases_only_unstarted(
@@ -133,18 +152,20 @@ def test_drain_unstarted_releases_only_unstarted(
     assert not docker_dispatcher.contains('j2')
 
 
-def test_drain_unstarted_latches_the_run_loop(docker_dispatcher: Dispatcher):
-    # After the scan, the run loop must not start anything else. Otherwise a
-    # job the poller dispatched in its final iteration could begin judging
-    # after shutdown, only to be abandoned when the process exits -- and it
-    # would be reclaimed with its attempts already spent, not requeued
-    # attempt-neutrally like a drain abort.
-    docker_dispatcher.start()
-    docker_dispatcher.stop_accepting()
-    assert docker_dispatcher.accepting is False
-
+def test_latch_keeps_run_loop_from_starting_queued_jobs(
+        docker_dispatcher: Dispatcher):
+    # A job dispatched BEFORE the latch (so it published fine) but not yet
+    # started must stay unstarted once the latch is set: it belongs to the
+    # drain scan. Otherwise it could begin judging after shutdown, only to be
+    # abandoned when the process exits -- and it would be reclaimed with its
+    # attempts already spent, not requeued attempt-neutrally like a drain
+    # abort. (Jobs dispatched AFTER the latch never publish at all; that is
+    # test_handle_refuses_jobs_once_draining.)
     _write_job_dir(docker_dispatcher, 'late', Language.PY, [1])
     docker_dispatcher.handle(job_id='late', submission_id='sub-late')
+    docker_dispatcher.stop_accepting()
+    assert docker_dispatcher.accepting is False
+    docker_dispatcher.start()
 
     # The run loop consuming the task is the signal that it has had its
     # chance at this job; waiting a fixed slice instead would pass vacuously
@@ -206,10 +227,10 @@ def test_case_result_for_released_job_is_dropped_not_fatal(
     docker_dispatcher: Dispatcher,
     monkeypatch,
 ):
-    # A case can finish after its job was released -- a drain, or the same
-    # job_id handled again after the backend reclaimed the lease. Indexing
-    # self.locks blindly would raise outside the JE guard and kill the worker
-    # without resolving anything, so the job would hang for the whole drain.
+    # A case can finish after its job was released (a drain). The worker holds
+    # the generation token it was spawned with; presenting it after the
+    # release must drop the result quietly -- raising here would kill the
+    # worker thread without resolving anything.
     class StubExecutor:
 
         def __init__(self, job_id, *args, **kwargs):
@@ -222,6 +243,7 @@ def test_case_result_for_released_job_is_dropped_not_fatal(
                         StubExecutor)
     _write_job_dir(docker_dispatcher, 'gone', Language.PY, [1])
     docker_dispatcher.handle(job_id='gone', submission_id='sub-gone')
+    ctx = docker_dispatcher.result['gone']
     docker_dispatcher.release('gone')
 
     docker_dispatcher.create_container(
@@ -232,7 +254,91 @@ def test_case_result_for_released_job_is_dropped_not_fatal(
         case_in_path='/nonexistent/0000.in',
         case_out_path='/nonexistent/0000.out',
         lang=Language.PY,
+        ctx=ctx,
     )
+
+    assert not docker_dispatcher.contains('gone')
+
+
+def test_stale_case_result_cannot_poison_a_rehandled_job(
+    docker_dispatcher: Dispatcher,
+    monkeypatch,
+):
+    # After an abort the backend requeues the job, and this same runner can
+    # claim it again under the SAME job_id while a worker from the first
+    # attempt is still running. A lookup by job_id alone would fetch the new
+    # attempt's state and complete it with the old run's data; the generation
+    # token pins the write to the exact handle() the worker was spawned under.
+    class StubExecutor:
+
+        def __init__(self, job_id, *args, **kwargs):
+            pass
+
+        def run(self):
+            return {'Status': 'AC'}
+
+    monkeypatch.setattr('dispatcher.dispatcher.SubmissionExecutor',
+                        StubExecutor)
+    _write_job_dir(docker_dispatcher, 'aba', Language.PY, [1])
+    docker_dispatcher.handle(job_id='aba', submission_id='sub-1')
+    stale_ctx = docker_dispatcher.result['aba']
+    docker_dispatcher.release('aba')
+    docker_dispatcher.handle(job_id='aba', submission_id='sub-2')
+    fresh_ctx = docker_dispatcher.result['aba']
+    assert fresh_ctx is not stale_ctx
+
+    kwargs = dict(
+        job_id='aba',
+        case_no='0000',
+        mem_limit=65536,
+        time_limit=1000,
+        case_in_path='in.txt',
+        case_out_path='out.txt',
+        lang=Language.PY,
+    )
+    docker_dispatcher.create_container(**kwargs, ctx=stale_ctx)
+
+    # The old attempt's result never reached the new attempt's state.
+    _, cases = docker_dispatcher.result['aba']
+    assert cases['0000'] is None
+
+    # The current generation still writes normally (testing=True, so the job
+    # is not post-processed/released and the state stays inspectable).
+    docker_dispatcher.create_container(**kwargs, ctx=fresh_ctx)
+    _, cases = docker_dispatcher.result['aba']
+    assert cases['0000']['status'] == 'AC'
+
+
+def test_stale_compile_result_is_dropped(
+    docker_dispatcher: Dispatcher,
+    monkeypatch,
+):
+    # Same generation contract for the compile path: a compile that finishes
+    # after its job was released / re-handled must not write its result into
+    # the new attempt (a stale CE would fail every case of a healthy rerun).
+    class StubExecutor:
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def compile(self):
+            return {'Status': 'CE'}
+
+    monkeypatch.setattr('dispatcher.dispatcher.SubmissionExecutor',
+                        StubExecutor)
+    _write_job_dir(docker_dispatcher, 'cs', Language.C, [1])
+    docker_dispatcher.handle(job_id='cs', submission_id='sub-1')
+    stale_ctx = docker_dispatcher.result['cs']
+    docker_dispatcher.release('cs')
+    docker_dispatcher.handle(job_id='cs', submission_id='sub-2')
+
+    docker_dispatcher.compile('cs', Language.C, ctx=stale_ctx)
+    assert 'cs' not in docker_dispatcher.compile_results
+
+    docker_dispatcher.compile('cs',
+                              Language.C,
+                              ctx=docker_dispatcher.result['cs'])
+    assert docker_dispatcher.compile_results['cs']['Status'] == 'CE'
 
 
 def test_drain_unstarted_leaves_in_flight_jobs_running(
@@ -335,7 +441,9 @@ def test_compile_je_fallback(docker_dispatcher: Dispatcher, monkeypatch):
     _write_job_dir(docker_dispatcher, 'cj', Language.C, [1])
     docker_dispatcher.handle(job_id='cj', submission_id='sub-cj')
 
-    docker_dispatcher.compile('cj', Language.C)
+    docker_dispatcher.compile('cj',
+                              Language.C,
+                              ctx=docker_dispatcher.result['cj'])
 
     assert docker_dispatcher.compile_results['cj']['Status'] == 'JE'
 
@@ -370,6 +478,7 @@ def test_execute_je_fallback(docker_dispatcher: Dispatcher, monkeypatch):
         'in.txt',
         'out.txt',
         Language.PY,
+        ctx=docker_dispatcher.result['ej'],
     )
 
     _, task_content = docker_dispatcher.result['ej']

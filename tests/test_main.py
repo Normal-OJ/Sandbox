@@ -16,13 +16,29 @@ from runner.result_sender import (
 )
 
 
-class FakeComponent:
-    """Records stop()/join() calls into a shared ordered log."""
+class ManualClock:
+    """A monotonic() stand-in that only moves when a fake join consumes it."""
 
-    def __init__(self, log, name, alive_after_join=False):
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+
+class FakeComponent:
+    """Records stop()/join() calls into a shared ordered log.
+
+    With ``clock`` set, join() consumes its whole granted timeout from that
+    clock -- modelling a component that blocks for everything it was given,
+    which is what exposes budget leaks between drain steps.
+    """
+
+    def __init__(self, log, name, alive_after_join=False, clock=None):
         self._log = log
         self._name = name
         self._alive_after_join = alive_after_join
+        self._clock = clock
         self.join_timeouts = []
 
     def stop(self):
@@ -31,6 +47,8 @@ class FakeComponent:
     def join(self, timeout=None):
         self._log.append(f'{self._name}.join')
         self.join_timeouts.append(timeout)
+        if self._clock is not None and timeout:
+            self._clock.t += timeout
 
     def is_alive(self):
         return self._alive_after_join
@@ -38,8 +56,13 @@ class FakeComponent:
 
 class FakeDispatcher(FakeComponent):
 
-    def __init__(self, log, victims, has_jobs_seq, always_has_jobs=False):
-        super().__init__(log, 'dispatcher')
+    def __init__(self,
+                 log,
+                 victims,
+                 has_jobs_seq,
+                 always_has_jobs=False,
+                 clock=None):
+        super().__init__(log, 'dispatcher', clock=clock)
         self._victims = victims
         self._has_jobs_seq = list(has_jobs_seq)
         self._always_has_jobs = always_has_jobs
@@ -75,6 +98,7 @@ def test_drain_orders_shutdown_and_aborts_unstarted():
         sender,
         heartbeat,
         result_queue,
+        ActiveJobTracker(),
         sleep=lambda s: None,
     )
 
@@ -127,6 +151,7 @@ def test_drain_stops_dispatcher_only_after_the_in_flight_wait():
         sender,
         heartbeat,
         queue.Queue(),
+        ActiveJobTracker(),
         sleep=lambda s: None,
     )
 
@@ -154,21 +179,24 @@ def test_drain_budget_is_shared_not_per_component():
         sender,
         heartbeat,
         queue.Queue(),
+        ActiveJobTracker(),
         sleep=lambda s: None,
         timeout_sec=100.0,
         monotonic=lambda: float(next(ticks)),
     )
 
-    granted = [
-        component.join_timeouts[0]
-        for component in (dispatcher, sender, heartbeat)
-    ]
-    assert granted == sorted(granted, reverse=True), granted
-    assert granted[0] > granted[-1]
-    # The poller is outside that ordering on purpose: it is capped at its own
-    # share of the budget, so it can be granted less than the components that
-    # join after it.
+    # Nobody gets a fresh copy of the budget, and each grant reflects what the
+    # earlier steps already consumed.
+    for component in (poller, dispatcher, sender, heartbeat):
+        assert component.join_timeouts[0] < 100.0
+    # The sender and heartbeat draw from the same shrinking pool, in order.
+    assert sender.join_timeouts[0] > heartbeat.join_timeouts[0]
+    # The poller is capped at its own share of the budget.
     assert poller.join_timeouts[0] <= 100.0 * main.POLLER_JOIN_SHARE
+    # The dispatcher's grant excludes the reporting reserve: that slice
+    # belongs to the sender, whatever the dispatcher does with its join.
+    assert dispatcher.join_timeouts[0] <= \
+        100.0 * (1 - main.REPORTING_RESERVE_SHARE)
 
 
 def test_drain_keeps_a_reserve_for_reporting():
@@ -189,6 +217,7 @@ def test_drain_keeps_a_reserve_for_reporting():
         sender,
         heartbeat,
         queue.Queue(),
+        ActiveJobTracker(),
         sleep=lambda s: None,
         timeout_sec=100.0,
         monotonic=lambda: float(next(ticks)),
@@ -198,39 +227,42 @@ def test_drain_keeps_a_reserve_for_reporting():
     assert heartbeat.join_timeouts[0] > 0
 
 
-def test_drain_rescans_when_the_poller_outlived_its_share():
-    # A poller that blew its share is still running, so it can dispatch after
-    # the first scan. Those jobs cannot start (the latch), but without a second
-    # scan they are never handed back either -- silently dropped rather than
-    # requeued attempt-neutrally.
+def test_drain_dispatcher_join_cannot_eat_the_reporting_reserve():
+    # The reserve is only real if EVERY step between the in-flight wait and
+    # the sender honours it. A dispatcher join granted the full remainder
+    # would consume the reserve right after the wait loop so carefully kept
+    # it, and the sender would still end up with nothing. The fake joins here
+    # consume everything they are granted, which is exactly the case that
+    # exposes the leak.
     log = []
-    poller = FakeComponent(log, 'poller', alive_after_join=True)
-    late = [('jb_late', 'sub_late')]
-    dispatcher = FakeDispatcher(log, late, [False])
+    clock = ManualClock()
+    poller = FakeComponent(log, 'poller', clock=clock)
+    dispatcher = FakeDispatcher(log, [], [False], clock=clock)
     sender = FakeComponent(log, 'sender')
     heartbeat = FakeComponent(log, 'heartbeat')
-    result_queue = queue.Queue()
 
     main.drain(
         poller,
         dispatcher,
         sender,
         heartbeat,
-        result_queue,
+        queue.Queue(),
+        ActiveJobTracker(),
         sleep=lambda s: None,
+        timeout_sec=100.0,
+        monotonic=clock,
     )
 
-    assert log.count('dispatcher.drain_unstarted') == 2, log
-    # The rescan has to happen while the sender can still send it.
-    assert log.index('sender.stop') > len(log) - 1 - log[::-1].index(
-        'dispatcher.drain_unstarted')
-    aborts = []
-    while not result_queue.empty():
-        aborts.append(result_queue.get_nowait())
-    assert [(a.job_id, a.reason) for a in aborts] == [('jb_late', 'drain')] * 2
+    # poller consumed its full share (25), dispatcher its full grant; the
+    # sender must still be handed at least the whole reserve (25).
+    reserve = 100.0 * main.REPORTING_RESERVE_SHARE
+    assert sender.join_timeouts[0] >= reserve, sender.join_timeouts
 
 
-def test_drain_does_not_rescan_when_the_poller_finished():
+def test_drain_scans_exactly_once_when_the_poller_finished():
+    # Quiescence comes from the dispatcher latch (handle() refuses jobs after
+    # it), so one scan is complete by construction and a rescan would only
+    # suggest otherwise.
     log = []
     poller = FakeComponent(log, 'poller')
     dispatcher = FakeDispatcher(log, [], [False])
@@ -241,10 +273,89 @@ def test_drain_does_not_rescan_when_the_poller_finished():
         FakeComponent(log, 'sender'),
         FakeComponent(log, 'heartbeat'),
         queue.Queue(),
+        ActiveJobTracker(),
         sleep=lambda s: None,
     )
 
     assert log.count('dispatcher.drain_unstarted') == 1, log
+
+
+def test_drain_holds_the_sender_open_while_the_poller_lives():
+    # A poller that outlived its join share is still capable of waking up and
+    # queueing a late 'drain' abort (its dispatch would be refused by the
+    # latched dispatcher). The sender must therefore stay alive until the
+    # poller thread has actually exited or the budget runs out -- never
+    # stopped early on an is_alive() guess.
+    log = []
+    sleeps = []
+    poller = FakeComponent(log, 'poller', alive_after_join=True)
+    dispatcher = FakeDispatcher(log, [], [False])
+    sender = FakeComponent(log, 'sender')
+    heartbeat = FakeComponent(log, 'heartbeat')
+    ticks = iter(range(1000))
+
+    rc = main.drain(
+        poller,
+        dispatcher,
+        sender,
+        heartbeat,
+        queue.Queue(),
+        ActiveJobTracker(),
+        sleep=lambda s: sleeps.append(s),
+        timeout_sec=100.0,
+        monotonic=lambda: float(next(ticks)),
+    )
+
+    assert rc == 0
+    # Still exactly one scan: the latch already guarantees nothing the scan
+    # would miss can be published, so a stuck poller changes the WAIT, not
+    # the scan count.
+    assert log.count('dispatcher.drain_unstarted') == 1, log
+    # The reporting tail genuinely waited for the (never-exiting) poller
+    # until the budget ran out, and only then stopped the sender.
+    assert len(sleeps) >= 50, len(sleeps)
+    assert 'sender.stop' in log
+
+
+def test_drain_reporting_tail_waits_for_unreported_outcomes():
+    # tracker entries are removed by the sender only after an outcome is
+    # finalized, so a non-empty tracker means reports are still owed. The
+    # tail must keep the sender alive until they are out -- and must exit as
+    # soon as they are, not burn the rest of the budget.
+    log = []
+    tracker = ActiveJobTracker()
+    tracker.add('jb_x')
+    sleeps = []
+
+    def sleep(seconds):
+        # Models the sender finalizing the last outcome a moment later.
+        sleeps.append(seconds)
+        if len(sleeps) == 3:
+            tracker.remove('jb_x')
+
+    poller = FakeComponent(log, 'poller')
+    dispatcher = FakeDispatcher(log, [], [False])
+    sender = FakeComponent(log, 'sender')
+    heartbeat = FakeComponent(log, 'heartbeat')
+    ticks = iter(range(1000))
+
+    rc = main.drain(
+        poller,
+        dispatcher,
+        sender,
+        heartbeat,
+        queue.Queue(),
+        tracker,
+        sleep=sleep,
+        timeout_sec=100.0,
+        monotonic=lambda: float(next(ticks)),
+    )
+
+    assert rc == 0
+    # It waited (3 sleeps until the tracker emptied), then moved on promptly
+    # instead of spinning to the deadline (~90+ sleeps).
+    assert 3 <= len(sleeps) <= 20, len(sleeps)
+    assert 'sender.stop' in log
 
 
 def test_drain_gives_up_on_in_flight_jobs_when_budget_runs_out():
@@ -263,6 +374,7 @@ def test_drain_gives_up_on_in_flight_jobs_when_budget_runs_out():
         sender,
         heartbeat,
         queue.Queue(),
+        ActiveJobTracker(),
         sleep=lambda s: None,
         timeout_sec=0.05,
     )
@@ -288,6 +400,7 @@ def test_drain_logs_components_that_outlive_the_budget(caplog):
             sender,
             heartbeat,
             queue.Queue(),
+            ActiveJobTracker(),
             sleep=lambda s: None,
             timeout_sec=0.05,
         )
