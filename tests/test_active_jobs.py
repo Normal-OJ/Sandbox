@@ -12,13 +12,35 @@ def test_add_and_snapshot():
     assert len(tracker) == 2
 
 
-def test_add_is_idempotent():
+def test_add_counts_claims_snapshot_dedupes():
+    # The same job_id can be claimed twice (lease expired, backend requeued,
+    # this runner re-claimed). Each claim counts -- capacity and the drain's
+    # reporting tail need the real number -- but the heartbeat renews one
+    # lease per job, so the snapshot stays deduplicated.
     tracker = ActiveJobTracker()
     tracker.add('jb_1')
     tracker.add('jb_1')
 
     assert tracker.snapshot() == ['jb_1']
+    assert len(tracker) == 2
+
+
+def test_interleaved_claims_of_the_same_job_id():
+    # The regression the set-based tracker had: claim 1's outcome finalizing
+    # (remove) must not also drop claim 2 -- the heartbeat would stop
+    # renewing the still-active claim's lease and the drain's reporting tail
+    # would think everything was reported.
+    tracker = ActiveJobTracker()
+    tracker.add('jb_1')  # claim 1
+    tracker.add('jb_1')  # claim 2, same job_id
+
+    tracker.remove('jb_1')  # claim 1's outcome finalized
     assert len(tracker) == 1
+    assert tracker.snapshot() == ['jb_1']  # claim 2 still renewed
+
+    tracker.remove('jb_1')  # claim 2's outcome finalized
+    assert len(tracker) == 0
+    assert tracker.snapshot() == []
 
 
 def test_remove():

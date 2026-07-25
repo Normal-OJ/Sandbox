@@ -13,6 +13,33 @@ from .constant import Language
 from .utils import logger
 
 
+class JobContext:
+    """Everything one handle() generation owns, in one object.
+
+    A fresh instance per handle() IS the generation token: queue entries and
+    worker threads carry the instance they were created under, and anything
+    presenting a stale instance is dropped on an identity check. Holding ALL
+    per-generation state here -- instead of parallel dicts keyed by job_id --
+    is what makes the binding airtight: there is no per-job state left that a
+    stale generation could reach, or poison, through its job_id alone.
+    """
+
+    __slots__ = ('config', 'submission_id', 'cases', 'compile_result',
+                 'started')
+
+    def __init__(self, config, submission_id, cases):
+        # the parsed Meta for this generation
+        self.config = config
+        self.submission_id = submission_id
+        # case_no -> result dict; None until the case resolves
+        self.cases = cases
+        # written once by this generation's compile worker
+        self.compile_result = None
+        # set by the run loop when this generation's work is first picked up;
+        # a drain only returns generations that never started
+        self.started = False
+
+
 class Dispatcher(threading.Thread):
 
     def __init__(
@@ -44,23 +71,15 @@ class Dispatcher(threading.Thread):
         # only creates spurious queue.Full failures (see handle()).
         # type Queue[Union[job.Compile, job.Execute]]
         self.queue = queue.Queue()
-        # task result
-        # type: Dict[job_id, Tuple[submission_info, List[result]]]
-        # The tuple doubles as the job's GENERATION token: handle() builds a
-        # fresh one every time, so a worker holding the tuple it was spawned
-        # with can tell "this handle() is still current" apart from "released,
-        # or re-handled under the same job_id" with a plain identity check.
+        # type: Dict[job_id, JobContext] -- the CURRENT generation per job.
+        # Everything else a generation owns lives on its JobContext, so a
+        # release or re-handle atomically retires the whole generation at
+        # once; queue entries and workers hold the instance they were created
+        # under and are dropped on an identity mismatch.
         self.result = {}
-        self.compile_results = {}
-        # maps job_id -> submission_id, for the backend callback
-        self.submission_ids = {}
         # invoked with (job_id, submission_id, tasks) when a job finishes;
         # main.py wires this to the result queue consumed by ResultSenderThread.
         self.on_complete = on_complete
-        # job ids whose work has actually been picked up in run(). state_lock
-        # guards the started-set transition against drain_unstarted() so a job
-        # can never be both drain-aborted and started.
-        self.started = set()
         # Cleared by stop_accepting()/drain_unstarted(): from then on handle()
         # refuses new jobs and the run loop starts no further ones, so nothing
         # begins judging after shutdown was requested.
@@ -113,6 +132,13 @@ class Dispatcher(threading.Thread):
         Raises DispatcherDrainingError once a drain has latched the
         dispatcher (stop_accepting). Nothing is published in that case; the
         poller returns the claim as an attempt-neutral 'drain' abort.
+
+        Returns True when this job_id was already present, i.e. the previous
+        generation was superseded by this call (a re-claim of the same job
+        after a backend reclaim). The superseded generation can never produce
+        an outcome -- its queue entries and workers fail the identity checks
+        from now on -- so the poller uses the return value to release the
+        dead claim's tracker count. Returns False otherwise.
         '''
         logger().info(f'receive job {job_id} (submission {submission_id}).')
         job_path = self.SUBMISSION_DIR / job_id
@@ -138,12 +164,16 @@ class Dispatcher(threading.Thread):
             if not self.accepting:
                 raise DispatcherDrainingError(
                     f'draining; refusing job {job_id}')
-            self.result[job_id] = (submission_config, task_content)
-            self.submission_ids[job_id] = submission_id
+            superseded = job_id in self.result
+            if superseded:
+                logger().warning(f're-handling {job_id}; superseding the '
+                                 'previous generation')
+            ctx = JobContext(submission_config, submission_id, task_content)
+            self.result[job_id] = ctx
 
             logger().debug(f'current jobs: {[*self.result.keys()]}')
             if self.compile_need(submission_config.language):
-                self.queue.put_nowait(job.Compile(job_id=job_id))
+                self.queue.put_nowait(job.Compile(job_id=job_id, ctx=ctx))
             for i, task in enumerate(submission_config.tasks):
                 for j in range(task.caseCount):
                     case_no = f'{i:02d}{j:02d}'
@@ -152,8 +182,10 @@ class Dispatcher(threading.Thread):
                         job_id=job_id,
                         task_id=i,
                         case_id=j,
+                        ctx=ctx,
                     )
                     self.queue.put_nowait(_job)
+        return superseded
 
     def release(self, job_id: str):
         with self.state_lock:
@@ -161,16 +193,9 @@ class Dispatcher(threading.Thread):
 
     def _release_locked(self, job_id: str):
         '''
-        Release variable about job. Caller must hold state_lock.
+        Retire the job's current generation. Caller must hold state_lock.
         '''
-        for v in (
-                self.result,
-                self.compile_results,
-                self.submission_ids,
-        ):
-            if job_id in v:
-                del v[job_id]
-        self.started.discard(job_id)
+        self.result.pop(job_id, None)
 
     def stop_accepting(self):
         '''Refuse new jobs and start no more queued ones; in-flight ones keep
@@ -204,8 +229,9 @@ class Dispatcher(threading.Thread):
         '''
         with self.state_lock:
             self.accepting = False
-            victims = [(j, self.submission_ids[j]) for j in list(self.result)
-                       if j not in self.started]
+            victims = [(job_id, ctx.submission_id)
+                       for job_id, ctx in list(self.result.items())
+                       if not ctx.started]
             for job_id, _ in victims:
                 self._release_locked(job_id)
         return victims
@@ -236,24 +262,27 @@ class Dispatcher(threading.Thread):
             # drain_unstarted(): once we mark a job started here, drain leaves
             # it to finish; before that, drain may abort it out from under us.
             with self.state_lock:
-                # if a job was discarded, it will not appear in `self.result`
-                if not self.contains(job_id):
-                    logger().info(f'discarded job [id={job_id}]')
+                # A queue entry belongs to the generation that enqueued it
+                # (handle() binds the JobContext in). An identity mismatch
+                # means the job was released -- or re-handled under the same
+                # job_id -- since the entry was queued: letting it through
+                # would bind the old generation's work to the NEW attempt,
+                # double-running cases or crashing on a task shape the new
+                # meta no longer has. Fetching state by job_id here would be
+                # exactly that bug, so the entry's own token is all we use.
+                ctx = _job.ctx
+                if self.result.get(job_id) is not ctx:
+                    logger().info(f'discarded stale task [id={job_id}]')
                     continue
-                # Draining: only jobs already in flight may keep consuming
-                # their remaining cases. Anything still unstarted belongs to
-                # drain_unstarted(), which returns it to the backend.
-                if not self.accepting and job_id not in self.started:
+                # Draining: only generations already in flight may keep
+                # consuming their remaining cases. Anything still unstarted
+                # belongs to drain_unstarted(), which returns it.
+                if not self.accepting and not ctx.started:
                     logger().info(f'draining, not starting [id={job_id}]')
                     continue
-                # The tuple is this job's generation token: the worker gets it
-                # at spawn time and must present it back before writing any
-                # result, so a release/re-handle while the case runs can never
-                # be written over.
-                ctx = self.result[job_id]
-                submission_config, _ = ctx
+                submission_config = ctx.config
                 if isinstance(_job, job.Compile):
-                    self.started.add(job_id)
+                    ctx.started = True
                     threading.Thread(
                         target=self.compile,
                         args=(
@@ -266,11 +295,11 @@ class Dispatcher(threading.Thread):
                     ).start()
                 # if this job needs compile and it haven't finished
                 elif self.compile_need(submission_config.language) \
-                    and self.compile_results.get(job_id) is None:
+                    and ctx.compile_result is None:
                     # unbounded queue: never blocks, safe under the lock
                     self.queue.put(_job)
                 else:
-                    self.started.add(job_id)
+                    ctx.started = True
                     task_info = submission_config.tasks[_job.task_id]
                     case_no = f'{_job.task_id:02d}{_job.case_id:02d}'
                     logger().info(
@@ -341,14 +370,17 @@ class Dispatcher(threading.Thread):
             res = {'Status': 'JE'}
         # Generation check and write share one critical section: a job
         # released while we compiled (drain), or re-handled under the same
-        # job_id (backend reclaim), owns a different tuple, and this stale
-        # result must not leak into it.
+        # job_id (backend reclaim), owns a different JobContext, and this
+        # stale result must not leak into it. The result lives ON the
+        # context, so even the dropped write could never reach another
+        # generation -- the check is what keeps the log honest and the
+        # generation's lifecycle explicit.
         with self.state_lock:
             if self.result.get(job_id) is not ctx:
                 logger().warning(
                     f'stale compile result for {job_id}; dropping')
                 return
-            self.compile_results[job_id] = res
+            ctx.compile_result = res
         logger().debug(f'finish compiling, get status {res["Status"]}')
 
     def create_container(
@@ -368,17 +400,20 @@ class Dispatcher(threading.Thread):
         # APIError from run()) must still resolve the case, or the job would
         # never complete and stay leased forever.
         try:
-            lang = ['c11', 'cpp17', 'python3'][int(lang)]
+            lang_name = ['c11', 'cpp17', 'python3'][int(lang)]
             executor = SubmissionExecutor(
                 job_id,
                 time_limit,
                 mem_limit,
                 case_in_path,
                 case_out_path,
-                lang=lang,
+                lang=lang_name,
                 case_no=case_no,
             )
-            res = self.extract_compile_result(job_id, lang)
+            # Pass the Language enum, not lang_name: compile_need() compares
+            # against the enum, so the defensive CE fallback inside would
+            # otherwise be unreachable for C/C++.
+            res = self.extract_compile_result(ctx, lang)
             # Execute if compile successfully
             if res['Status'] != 'CE':
                 try:
@@ -397,8 +432,8 @@ class Dispatcher(threading.Thread):
         # write this stale result into the new attempt -- completing it early
         # with another run's data -- and a bare lookup after a release would
         # raise outside the JE guard and kill this thread. The identity check
-        # on the exact tuple we were spawned with rejects both, atomically
-        # with the write.
+        # on the exact JobContext we were spawned with rejects both,
+        # atomically with the write.
         with self.state_lock:
             if self.result.get(job_id) is not ctx:
                 logger().warning(
@@ -415,16 +450,15 @@ class Dispatcher(threading.Thread):
                 prob_status=res['Status'],
             )
 
-    def extract_compile_result(self, job_id: str, lang: Language):
+    def extract_compile_result(self, ctx, lang: Language):
         '''
-        Get compile result for specific job. If the language does
-        not need to be compiled, return a AC result.
+        Get the compile result of a job's generation. If the language does
+        not need to be compiled, return an AC result.
         '''
-        try:
-            return self.compile_results[job_id]
-        except KeyError:
-            status = 'CE' if self.compile_need(lang) else 'AC'
-            return {'Status': status}
+        if ctx.compile_result is not None:
+            return ctx.compile_result
+        status = 'CE' if self.compile_need(lang) else 'AC'
+        return {'Status': status}
 
     def on_case_complete(
         self,
@@ -437,6 +471,9 @@ class Dispatcher(threading.Thread):
         mem_usage: int,
         prob_status: str,
     ):
+        '''Test-facing wrapper. Generation-UNSAFE: it resolves the job by
+        job_id, so production code must go through the identity-checked path
+        in create_container() instead of calling this.'''
         with self.state_lock:
             self._on_case_complete_locked(
                 job_id=job_id,
@@ -466,7 +503,7 @@ class Dispatcher(threading.Thread):
             raise JobIdNotFoundError(
                 f'received case result for unknown job {job_id}')
         # update case result
-        _, results = self.result[job_id]
+        results = self.result[job_id].cases
         if case_no not in results:
             raise ValueError(f'{job_id}/{case_no} not found.')
         results[case_no] = {
@@ -484,6 +521,7 @@ class Dispatcher(threading.Thread):
             self._on_job_complete_locked(job_id)
 
     def on_job_complete(self, job_id: str):
+        '''Test-facing wrapper. Generation-UNSAFE, like on_case_complete().'''
         with self.state_lock:
             self._on_job_complete_locked(job_id)
 
@@ -495,7 +533,8 @@ class Dispatcher(threading.Thread):
             logger().info(
                 f'skip job post processing in testing [job_id={job_id}]')
             return True
-        _, results = self.result[job_id]
+        ctx = self.result[job_id]
+        results = ctx.cases
         # parse results
         submission_result = {}
         for no, r in results.items():
@@ -513,7 +552,7 @@ class Dispatcher(threading.Thread):
         # Hand the result off to the result queue via on_complete. Local dir
         # cleanup/backup and tracker bookkeeping are now entirely the
         # ResultSenderThread's job; release() only drops dispatcher state.
-        submission_id = self.submission_ids[job_id]
+        submission_id = ctx.submission_id
         # Enqueue BEFORE release: has_jobs() must stay True until the result
         # is in the queue, or a concurrent drain could observe an empty
         # dispatcher, stop the sender, and lose this result.

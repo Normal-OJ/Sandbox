@@ -163,7 +163,7 @@ class PollerThread(threading.Thread):
             return False
 
         try:
-            self._dispatch(payload.job_id, payload.submission_id)
+            superseded = self._dispatch(payload.job_id, payload.submission_id)
         except DispatcherDrainingError:
             # The drain latched the dispatcher while this claim was in prep.
             # Nothing was published and nothing started, so the claim goes
@@ -179,6 +179,17 @@ class PollerThread(threading.Thread):
             # onto another runner that would hit the same bad payload.
             logger.warning('dispatch for %s failed: %s', payload.job_id, err)
             self._abort(payload, 'prep_failed')
+        else:
+            if superseded:
+                # This claim replaced an earlier generation of the same
+                # job_id (the backend reclaimed its expired lease, requeued,
+                # and we claimed it again). The dead generation fails every
+                # identity check from now on, so nothing else will ever
+                # produce an outcome for it -- release its tracker count
+                # here, keeping adds and removes balanced at one per claim.
+                logger.info('claim of %s superseded a previous generation',
+                            payload.job_id)
+                self._tracker.remove(payload.job_id)
         return False
 
     def _abort(self, payload, reason):

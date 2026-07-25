@@ -302,11 +302,13 @@ def test_drain_completes_in_flight_and_returns_unstarted(
     # ordering is what guarantees the run loop is saturated when B arrives.
     assert recorder.started.wait(WAIT_TIMEOUT), 'executor for A never ran'
     wait_until(lambda: d.container_count == 1, 'container slot to be taken')
-    wait_until(lambda: 'A' in d.started, 'A to be marked started')
+    wait_until(lambda: d.contains('A') and d.result['A'].started,
+               'A to be marked started')
     gate.set()
 
     wait_until(lambda: d.contains('B'), 'B to be handled by the dispatcher')
-    assert 'B' not in d.started, 'B must stay unstarted for this test to mean anything'
+    assert not d.result['B'].started, \
+        'B must stay unstarted for this test to mean anything'
 
     # Let A finish only once drain_unstarted() has already returned B (B is
     # gone from the dispatcher). Releasing earlier would free the container
@@ -368,8 +370,13 @@ class GhostFeeder:
         while not self._done.is_set():
             while self._dispatcher.queue.qsize() < 32 and \
                     not self._done.is_set():
+                # ctx is a throwaway object, so the identity check discards
+                # these instantly -- which is the point: keep the loop hot.
                 self._dispatcher.queue.put(
-                    job_mod.Execute(job_id='ghost', task_id=0, case_id=0))
+                    job_mod.Execute(job_id='ghost',
+                                    task_id=0,
+                                    case_id=0,
+                                    ctx=object()))
                 self.fed += 1
             time.sleep(0.001)
 
@@ -453,7 +460,7 @@ def test_drain_latches_dispatcher_before_waiting_for_poller(
     assert client.aborts == [('L', 'drain')]
     assert client.completes == []
     assert recorder.ran == [], 'job started judging after shutdown'
-    assert 'L' not in d.started
+    assert not d.contains('L')
 
 
 def test_drain_returns_claim_whose_prep_succeeded_after_stop(
@@ -511,7 +518,7 @@ def test_drain_returns_claim_whose_prep_succeeded_after_stop(
     assert client.completes == []
     # Never judged: no work may begin once shutdown was requested.
     assert recorder.ran == []
-    assert 'E' not in d.started
+    assert not d.contains('E')
     assert tracker.snapshot() == []
 
 

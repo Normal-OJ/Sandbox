@@ -60,16 +60,20 @@ class ScriptedClient:
 
 class DispatchRecorder:
 
-    def __init__(self, fail_times=0, exc=None):
+    def __init__(self, fail_times=0, exc=None, superseded=False):
         self.calls = []
         self._fail_times = fail_times
         self._exc = exc or RuntimeError('dispatch failed')
+        # Mirrors Dispatcher.handle()'s return value: True when this dispatch
+        # replaced a previous generation of the same job_id.
+        self._superseded = superseded
 
     def __call__(self, job_id, submission_id):
         self.calls.append((job_id, submission_id))
         if self._fail_times > 0:
             self._fail_times -= 1
             raise self._exc
+        return self._superseded
 
 
 class PrepareRecorder:
@@ -409,6 +413,30 @@ def test_dispatch_refused_by_draining_dispatcher_aborts_as_drain():
     assert item.reason == 'drain'
     assert q.empty()
     # Still in tracker: the sender removes it as it finalizes the abort.
+    assert tracker.snapshot() == ['jb_1']
+
+
+def test_supersede_dispatch_releases_the_dead_claims_count():
+    # A dispatch that superseded a previous generation (handle() returned
+    # True) means the old claim of this job_id can never produce an outcome:
+    # nothing else will ever remove its tracker count, so the poller must.
+    # Without this, the dead count would hold a capacity slot forever and
+    # keep the drain's reporting tail waiting for a report that cannot come.
+    tracker = ActiveJobTracker()
+    tracker.add('jb_1')  # the dead claim, left over from an expired lease
+    prepare = PrepareRecorder(tracker)
+    dispatch = DispatchRecorder(superseded=True)
+    poller, _, tracker, q, _, _ = build_poller([make_payload()],
+                                               tracker=tracker,
+                                               prepare=prepare,
+                                               dispatch=dispatch)
+
+    assert poller._poll_once() is False
+
+    assert dispatch.calls == [('jb_1', 'sub_1')]
+    assert q.empty()
+    # One count for the new claim; the dead claim's count was released.
+    assert len(tracker) == 1
     assert tracker.snapshot() == ['jb_1']
 
 

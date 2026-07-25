@@ -358,6 +358,51 @@ def test_drain_reporting_tail_waits_for_unreported_outcomes():
     assert 'sender.stop' in log
 
 
+def test_drain_reporting_tail_survives_same_job_id_reclaim():
+    # Two claims of the SAME job_id can be outstanding at once: the first
+    # claim's lease expired, the backend requeued the job, and this runner
+    # claimed it again. The first claim's outcome finalizing must not
+    # convince the tail that the second was reported too -- that was the
+    # failure mode of a set-based tracker, where one remove dropped both.
+    log = []
+    tracker = ActiveJobTracker()
+    tracker.add('jb_x')  # claim 1
+    tracker.add('jb_x')  # claim 2, same job_id
+    sleeps = []
+
+    def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) == 1:
+            tracker.remove('jb_x')  # claim 1's outcome finalized
+        if len(sleeps) == 4:
+            tracker.remove('jb_x')  # claim 2's outcome finalized
+
+    poller = FakeComponent(log, 'poller')
+    dispatcher = FakeDispatcher(log, [], [False])
+    sender = FakeComponent(log, 'sender')
+    heartbeat = FakeComponent(log, 'heartbeat')
+    ticks = iter(range(1000))
+
+    rc = main.drain(
+        poller,
+        dispatcher,
+        sender,
+        heartbeat,
+        queue.Queue(),
+        tracker,
+        sleep=sleep,
+        timeout_sec=100.0,
+        monotonic=lambda: float(next(ticks)),
+    )
+
+    assert rc == 0
+    # With a set, the first remove would empty the tracker and the tail
+    # would stop after a single sleep. It must keep waiting for claim 2,
+    # then move on promptly once that one is reported as well.
+    assert 4 <= len(sleeps) <= 20, len(sleeps)
+    assert 'sender.stop' in log
+
+
 def test_drain_gives_up_on_in_flight_jobs_when_budget_runs_out():
     # Waiting forever would hand the decision to docker's SIGKILL and lose the
     # results already queued; the budget makes the drain finish on its own and
