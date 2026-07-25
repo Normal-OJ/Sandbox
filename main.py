@@ -112,20 +112,24 @@ def drain(poller,
     """SIGTERM graceful drain (spec §10). Returns 0.
 
     The ordering here is the whole point of the slice:
-    1. Stop and JOIN the poller BEFORE scanning the dispatcher: a claim in
-       flight mid-iteration must land in the dispatcher before we scan, or it
-       would be dispatched after the scan and never aborted.
-    2. Latch the dispatcher out of starting new work BEFORE that join, then
-       scan once the poller is gone: a job the poller dispatches on its way out
-       must not be picked up while we wait. Every job the scan returns is
-       aborted with reason 'drain' (the backend does not count those against a
-       submission's attempts).
-    3. Wait for in-flight (already-started) jobs to finish; they push
+    1. Latch the dispatcher FIRST, before touching anything else. The
+       invariant is "once a drain starts, no job begins judging", so the latch
+       has to precede every other step -- including stopping the poller. Doing
+       it even one statement later leaves a window where the poller finishes a
+       prep, dispatches, and the run loop starts that job while the dispatcher
+       is still accepting. A job claimed in that same window is not lost: it
+       cannot start, and the scan below returns it.
+    2. Stop and JOIN the poller BEFORE scanning: a claim in flight mid
+       iteration must land in the dispatcher before we scan, or it would be
+       dispatched afterwards and never aborted.
+    3. Scan, and abort everything unstarted with reason 'drain' (the backend
+       does not count those against a submission's attempts).
+    4. Wait for in-flight (already-started) jobs to finish; they push
        CompleteRequests.
-    4. Stop the dispatcher.
-    5. Stop the sender -- it exits only once the queue is empty, so every
+    5. Stop the dispatcher.
+    6. Stop the sender -- it exits only once the queue is empty, so every
        queued complete and drain abort is actually reported first.
-    6. Stop the heartbeat LAST: complete/abort need a live lease until sent,
+    7. Stop the heartbeat LAST: complete/abort need a live lease until sent,
        so the heartbeat must outlive the sender.
 
     Every wait shares one budget (``timeout_sec``). Draining is best-effort:
@@ -146,11 +150,9 @@ def drain(poller,
                 'drain: %s outlived the budget; its work is left to lease '
                 'expiry and backend reclaim', name)
 
-    poller.stop()
-    # Latch the dispatcher BEFORE waiting for the poller: the poller can still
-    # finish a prep and dispatch a job while we join it, and until the latch is
-    # set the run loop would happily start that job mid-drain.
+    # Before anything else, including stopping the poller: see step 1.
     dispatcher.stop_accepting()
+    poller.stop()
     join_within(poller, 'poller')
 
     for job_id, submission_id in dispatcher.drain_unstarted():

@@ -160,13 +160,15 @@ class Dispatcher(threading.Thread):
     def stop_accepting(self):
         '''Stop starting new jobs; in-flight ones keep running.
 
-        Call this BEFORE waiting for the poller to finish, not after: the
-        poller can still complete a prep and dispatch a job while drain is
-        joining it, and until this latch is set the run loop is free to pick
-        that job up. It would then be judging work that began after shutdown,
-        get abandoned when the process exits, and come back through reclaim
-        with its claim attempt already spent, instead of being requeued
-        attempt-neutrally by drain_unstarted().
+        This is the first thing a drain does -- before even stopping the
+        poller. The poller can complete a prep and dispatch at any point on
+        its way out, and until this latch is set the run loop is free to start
+        that job. It would then be judging work that began after shutdown, get
+        abandoned when the process exits, and come back through reclaim with
+        its claim attempt already spent, instead of being requeued
+        attempt-neutrally by drain_unstarted(). Latching first also makes the
+        window harmless rather than merely small: a job dispatched after the
+        latch simply cannot start, and the scan returns it.
         '''
         with self.state_lock:
             self.accepting = False

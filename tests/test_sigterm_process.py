@@ -5,9 +5,10 @@ tests/test_drain_integration.py wires the real threads but still calls
 ``main.drain()`` by hand, and the signal test only checks that the handler sets
 an event. None of them prove that ``docker stop`` on a live runner actually
 completes the drain and exits. This one does: it launches main.py as a
-subprocess against a stub backend, sends it a real SIGTERM while a claim is
-still in prep, and asserts the backend saw abort(reason='drain') and the
-process exited 0.
+subprocess against a stub backend, sends it a real SIGTERM at a point where the
+child is demonstrably inside prep (it has opened a connection to our stub
+redis), and asserts the backend saw abort(reason='drain') and the process
+exited 0.
 
 NOTE: this is the slow file in the suite (a few seconds -- it spawns a process
 and waits for real HTTP round trips). It needs no docker daemon and no extra
@@ -180,18 +181,71 @@ def make_handler(state):
     return Handler
 
 
-def dead_port():
-    """A port nothing is listening on: bind to 0, read it back, release it.
+class StubRedis:
+    """A socket that accepts connections and then says nothing.
 
-    Pointing REDIS_URL here makes ``testdata.ensure_testdata`` -- the first
-    thing prepare_job does -- fail immediately with connection refused. The
-    poller then retries on its 1s/2s backoff, which is the ~3s window during
-    which the job is claimed but not dispatched. That is exactly the state
-    whose drain behaviour this test exists to prove.
+    This is the test's synchronisation point, and it has to be this rather
+    than "the backend served next-job": that only proves the response was
+    written, not that the child received it, let alone that it entered
+    ``_prepare``. SIGTERM arriving a moment too early would be handled by the
+    prep loop's very first stop check -- still an abort(drain), so the test
+    would pass while proving something weaker than it claims.
+
+    ``prepare_job`` starts with ``ensure_testdata()``, which talks to redis, so
+    a connection here means the child is demonstrably inside prep. Holding the
+    connection open (never answering) keeps it parked there until the test has
+    sent the signal and drops it.
     """
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        return sock.getsockname()[1]
+
+    def __init__(self):
+        self._sock = socket.socket()
+        self._sock.bind(('127.0.0.1', 0))
+        self._sock.listen(8)
+        self.port = self._sock.getsockname()[1]
+        self.connected = threading.Event()
+        self._lock = threading.Lock()
+        self._conns = []
+        self._closed = False
+
+    def serve(self):
+        while True:
+            try:
+                conn, _ = self._sock.accept()
+            except OSError:
+                return  # listening socket closed during teardown
+            with self._lock:
+                if self._closed:
+                    conn.close()
+                    return
+                self._conns.append(conn)
+            self.connected.set()
+
+    def drop_connections(self):
+        """Fail the child's in-flight redis call now.
+
+        Without this it would sit there until its socket timeout, turning a
+        1.6s test into an 11s one.
+        """
+        with self._lock:
+            conns, self._conns = self._conns, []
+        for conn in conns:
+            conn.close()
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+        self.drop_connections()
+        self._sock.close()
+
+
+@pytest.fixture
+def stub_redis():
+    stub = StubRedis()
+    threading.Thread(target=stub.serve, daemon=True).start()
+    try:
+        yield stub
+    finally:
+        stub.close()
 
 
 @pytest.fixture
@@ -209,8 +263,8 @@ def stub_backend():
         thread.join(timeout=WAIT_TIMEOUT)
 
 
-def test_real_sigterm_drains_and_exits(tmp_path, stub_backend):
-    # docker stop on a runner holding an unstarted claim: the claim must come
+def test_real_sigterm_drains_and_exits(tmp_path, stub_backend, stub_redis):
+    # docker stop on a runner whose claim is still in prep: the claim must come
     # back as an attempt-neutral 'drain' abort (never 'prep_failed', which
     # would push otherwise healthy submissions towards JE on a rolling
     # restart), nothing may be reported complete, and the process must exit 0
@@ -220,8 +274,9 @@ def test_real_sigterm_drains_and_exits(tmp_path, stub_backend):
         'BACKEND_URL': stub_backend.url,
         'RUNNER_REGISTRATION_TOKEN': 'reg-token',
         'RUNNER_NAME': 'sigterm-test-runner',
-        # Unreachable on purpose -- see dead_port().
-        'REDIS_URL': f'redis://127.0.0.1:{dead_port()}/0',
+        # Answers the TCP handshake and nothing else, so prep parks here --
+        # see StubRedis.
+        'REDIS_URL': f'redis://127.0.0.1:{stub_redis.port}/0',
         # Keep every directory the runner creates or writes inside tmp_path so
         # the test never touches the working tree.
         'SUBMISSION_DIR': str(tmp_path / 'submissions'),
@@ -256,10 +311,22 @@ def test_real_sigterm_drains_and_exits(tmp_path, stub_backend):
                 'the runner to claim a job',
                 output,
             )
+            # The claim is not enough: wait until the child is provably inside
+            # prep (it has opened a redis connection, which only ensure_testdata
+            # does) before signalling.
+            wait_for(
+                proc,
+                stub_redis.connected.is_set,
+                'the runner to reach redis from inside prep',
+                output,
+            )
 
-            # Land the signal inside the prep-retry window, i.e. while the job
-            # is claimed but has never started judging.
+            # The job is now claimed, prep is running, and nothing has been
+            # dispatched -- the exact state whose drain behaviour is at stake.
             proc.send_signal(signal.SIGTERM)
+            # Let the parked redis call fail immediately so prep unwinds now
+            # rather than after its socket timeout.
+            stub_redis.drop_connections()
 
             try:
                 returncode = proc.wait(timeout=EXIT_TIMEOUT)

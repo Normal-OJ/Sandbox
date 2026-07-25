@@ -74,12 +74,13 @@ def test_drain_orders_shutdown_and_aborts_unstarted():
     # poller fully stopped before the dispatcher is scanned for victims.
     assert log.index('poller.stop') < log.index('poller.join')
     assert log.index('poller.join') < log.index('dispatcher.drain_unstarted')
-    # The latch goes in BEFORE we wait for the poller. The poller can still
-    # finish a prep and dispatch during that wait, and the run loop would
-    # start that job if the dispatcher were still accepting -- work beginning
-    # after shutdown, which the scan afterwards would then leave alone.
-    assert log.index('dispatcher.stop_accepting') < log.index('poller.join')
-    assert log.index('poller.stop') < log.index('dispatcher.stop_accepting')
+    # The latch comes FIRST -- before the poller is even asked to stop. Any
+    # later and there is a window where the poller finishes a prep, dispatches,
+    # and the run loop starts that job while the dispatcher still accepts work:
+    # judging that begins after shutdown, which the scan then leaves alone
+    # because it looks in-flight.
+    assert log[0] == 'dispatcher.stop_accepting', log
+    assert log.index('dispatcher.stop_accepting') < log.index('poller.stop')
     # both unstarted jobs aborted with reason 'drain'.
     aborts = []
     while not result_queue.empty():
